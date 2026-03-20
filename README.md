@@ -12,7 +12,7 @@ Key properties:
 
 -   **Zero-knowledge** — the app never sees your password or plaintext data
 -   **Offline-first** — works entirely without network access
--   **No installation** — open one HTML file and you're running
+-   **No installation** — start the local server and you're running (or use online)
 
 ---
 
@@ -24,7 +24,7 @@ Key properties:
 -   **Built-in viewers** — text editor, image viewer, audio/video player, PDF viewer
 -   **Hardware key support** — optionally use a WebAuthn passkey to strengthen the container salt
 -   **Session memory** — optionally remember your session per tab or per browser
--   **Container import / export** — portable `.twc` container files
+-   **Container import / export** — portable `.safenova` container files
 -   **Sort & arrange** — sort icons by name, date, size, or type; drag to custom positions
 -   **Keyboard shortcuts** — `Delete`, `F2`, `Ctrl+A`, `Ctrl+C/X/V`, `Ctrl+S` (save in editor), `Escape`
 -   **Mobile-friendly** — touch drag, rubber-band selection, single/double-tap gestures
