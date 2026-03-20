@@ -1,6 +1,51 @@
 'use strict';
 
 /* ============================================================
+   CONSOLE SECURITY WARNING
+   ============================================================ */
+(function consoleSecurityWarning() {
+    const W   = 60;
+    const pad = s => s + ' '.repeat(Math.max(0, W - s.length));
+    const row = s => `║ ${pad(s)} ║`;
+    const top = `╔${'═'.repeat(W + 2)}╗`;
+    const bot = `╚${'═'.repeat(W + 2)}╝`;
+    const sep = `╠${'═'.repeat(W + 2)}╣`;
+    const _   = row('');
+
+    const box = [
+        top,
+        _,
+        row('  DO NOT paste any code or commands into this console.'),
+        row('  Not from the internet. Not from anyone. For any reason.'),
+        _,
+        sep,
+        _,
+        row('  A single malicious snippet can silently:'),
+        row('    \u203a  intercept and exfiltrate your encryption keys'),
+        row('    \u203a  dump the entire local file storage in plaintext'),
+        row('    \u203a  steal your container password as you type'),
+        row('    \u203a  re-encrypt your files with an attacker-controlled key'),
+        _,
+        sep,
+        _,
+        row('  [!] Only use this console if you know what you are doing.'),
+        row('      If someone told you to paste something here \u2014'),
+        row('      you are being socially engineered.'),
+        _,
+        bot,
+    ].join('\n');
+
+    const show = () => console.log(
+        '%c STOP %c SafeNova \u2014 Security Warning\n%c\n' + box,
+        'font-size:13px;font-weight:900;color:#1e1e1e;background:#f44747;padding:2px 10px;border-radius:2px;font-family:Consolas,monospace',
+        'font-size:13px;font-weight:700;color:#f44747;font-family:Consolas,monospace',
+        'font-size:12px;color:#d4d4d4;line-height:1;font-family:Consolas,monospace'
+    );
+    show();
+    setInterval(show, 5_000);
+})();
+
+/* ============================================================
    PASSWORD EYE TOGGLE
    ============================================================ */
 function togglePwEye(inputId, btnId) {
