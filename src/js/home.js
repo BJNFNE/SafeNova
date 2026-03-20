@@ -713,7 +713,7 @@ async function doUnlock() {
         App.folder = 'root';
         App.selection.clear();
         App.showView('desktop');
-        if (typeof _applySettings === 'function') _applySettings(_getSettings());
+        if (typeof _applySettings === 'function') _applySettings(_getSettings(), true);
         Desktop.render();
         toast(`Container "${c.name}" unlocked`, 'success');
         // Save or clear session based on checkbox
@@ -817,7 +817,7 @@ async function _resumeSession(c, pw) {
         App.folder = 'root';
         App.selection.clear();
         App.showView('desktop');
-        if (typeof _applySettings === 'function') _applySettings(_getSettings());
+        if (typeof _applySettings === 'function') _applySettings(_getSettings(), true);
         Desktop.render();
         toast(`Session for "${c.name}" restored`, 'success');
     } catch (e) {

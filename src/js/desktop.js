@@ -238,7 +238,7 @@ function _getSettings() {
     return { ...SETTINGS_DEFAULTS, ...s };
 }
 
-function _applySettings(s) {
+function _applySettings(s, skipRemap = false) {
     // Icon Size — apply to body so it covers desktop + all folder windows
     document.body.classList.remove('icons-small', 'icons-normal', 'icons-large');
     document.body.classList.add('icons-' + (s.iconSize || 'normal'));
@@ -250,8 +250,10 @@ function _applySettings(s) {
     GRID_X = Math.round(96 * scale);
     GRID_Y = Math.round(96 * scale);
 
-    // Remap all saved positions to the new grid if grid changed
-    if (oldGX !== GRID_X || oldGY !== GRID_Y) {
+    // Remap all saved positions to the new grid if grid changed.
+    // skipRemap=true is passed on initial container load — positions are already
+    // stored in the correct grid space and must NOT be converted again.
+    if (!skipRemap && (oldGX !== GRID_X || oldGY !== GRID_Y)) {
         VFS.remapPositions(oldGX, oldGY, GRID_X, GRID_Y);
         saveVFS();
         Desktop._renderIcons();
