@@ -13,9 +13,9 @@ function _saveCardOrder(ids) {
 
 const Home = {
     async render() {
-        const grid = document.getElementById('container-grid');
-        const empty = document.getElementById('container-empty');
-        const containers = await DB.getContainers();
+        const grid = document.getElementById('container-grid'),
+            empty = document.getElementById('container-empty'),
+            containers = await DB.getContainers();
 
         grid.querySelectorAll('.container-card').forEach(c => c.remove());
 
@@ -36,8 +36,8 @@ const Home = {
         await updateStorageInfo();
 
         // ---- Persistent visibility: warning box (only when 1+ container exists) ----
-        const warnBox = document.getElementById('home-warning-box');
-        const dismissBtn = document.getElementById('warning-dismiss');
+        const warnBox = document.getElementById('home-warning-box'),
+            dismissBtn = document.getElementById('warning-dismiss');
         if (warnBox) {
             const shouldShow = containers.length > 0 && localStorage.getItem('snv-warn-hide') !== '1';
             warnBox.classList.toggle('hidden', !shouldShow);
@@ -50,9 +50,9 @@ const Home = {
         }
 
         // ---- Persistent visibility: doc block ----
-        const docEl = document.getElementById('home-doc');
-        const docTab = document.getElementById('home-doc-tab');
-        const collapseBtn = document.getElementById('home-doc-collapse');
+        const docEl = document.getElementById('home-doc'),
+            docTab = document.getElementById('home-doc-tab'),
+            collapseBtn = document.getElementById('home-doc-collapse');
         const _applyDoc = (hidden) => {
             if (!docEl || !docTab) return;
             docEl.classList.toggle('collapsed', hidden);
@@ -80,10 +80,10 @@ const Home = {
     },
 
     _makeCard(c) {
-        const pct = Math.min((c.totalSize || 0) / CONTAINER_LIMIT * 100, 100);
-        const fill = pct > 90 ? 'danger' : pct > 70 ? 'warn' : '';
-        const hasSess = !!(sessionStorage.getItem('twc-s-' + c.id) || localStorage.getItem('twc-s-' + c.id));
-        const card = document.createElement('div');
+        const pct = Math.min((c.totalSize || 0) / CONTAINER_LIMIT * 100, 100),
+            fill = pct > 90 ? 'danger' : pct > 70 ? 'warn' : '',
+            hasSess = !!(sessionStorage.getItem('twc-s-' + c.id) || localStorage.getItem('twc-s-' + c.id)),
+            card = document.createElement('div');
         card.className = 'container-card';
         card.dataset.id = c.id;
         card.innerHTML = `
@@ -189,9 +189,9 @@ const Home = {
 
 /* ---- Container context menu ---- */
 function showContainerMenu(e, c) {
-    const hasSess = !!(sessionStorage.getItem('twc-s-' + c.id) || localStorage.getItem('twc-s-' + c.id));
-    const isOpen = App.container && App.container.id === c.id;
-    const items = [];
+    const hasSess = !!(sessionStorage.getItem('twc-s-' + c.id) || localStorage.getItem('twc-s-' + c.id)),
+        isOpen = App.container && App.container.id === c.id,
+        items = [];
 
     // Open — resume if session exists, otherwise go to unlock view
     items.push({
@@ -249,12 +249,13 @@ function openChangePasswordModal(c) {
 }
 
 async function doChangePassword() {
-    const okBtn = document.getElementById('cp-ok');
-    const c = okBtn._container; if (!c) return;
-    const oldPw = document.getElementById('cp-old').value;
-    const newPw = document.getElementById('cp-new').value;
-    const newPw2 = document.getElementById('cp-new2').value;
-    const errEl = document.getElementById('cp-error');
+    const okBtn = document.getElementById('cp-ok'),
+        c = okBtn._container;
+    if (!c) return;
+    const oldPw = document.getElementById('cp-old').value,
+        newPw = document.getElementById('cp-new').value,
+        newPw2 = document.getElementById('cp-new2').value,
+        errEl = document.getElementById('cp-error');
 
     if (!oldPw) { errEl.textContent = 'Enter current password'; return; }
     if (newPw.length < 4) { errEl.textContent = 'New password must be at least 4 characters'; return; }
@@ -267,13 +268,13 @@ async function doChangePassword() {
 
     try {
         // Verify old password
-        const oldKey = await Crypto.deriveKey(oldPw, new Uint8Array(c.salt));
-        const ok = await Crypto.checkVerification(oldKey, c.verIv, c.verBlob);
+        const oldKey = await Crypto.deriveKey(oldPw, new Uint8Array(c.salt)),
+            ok = await Crypto.checkVerification(oldKey, c.verIv, c.verBlob);
         if (!ok) { hideLoading(); toast('Incorrect current password', 'error'); return; }
 
         showLoading('Deriving new key…');
-        const newSalt = Array.from(crypto.getRandomValues(new Uint8Array(32)));
-        const newKey = await Crypto.deriveKey(newPw, new Uint8Array(newSalt));
+        const newSalt = Array.from(crypto.getRandomValues(new Uint8Array(32))),
+            newKey = await Crypto.deriveKey(newPw, new Uint8Array(newSalt));
 
         // Re-encrypt VFS
         showLoading('Re-encrypting VFS…');
@@ -345,10 +346,11 @@ function openRenameContainerModal(c) {
 }
 
 async function doRenameContainer() {
-    const okBtn = document.getElementById('rc-ok');
-    const c = okBtn._container; if (!c) return;
-    const name = document.getElementById('rc-name').value.trim();
-    const errEl = document.getElementById('rc-error');
+    const okBtn = document.getElementById('rc-ok'),
+        c = okBtn._container;
+    if (!c) return;
+    const name = document.getElementById('rc-name').value.trim(),
+        errEl = document.getElementById('rc-error');
 
     if (!name) { errEl.textContent = 'Enter a name'; return; }
     const nameRegex = /^[a-zA-Zа-яА-ЯёЁ0-9 _\-.,!()@#$%&+=]+$/;
@@ -371,8 +373,8 @@ function confirmDeleteContainer(c) {
     document.getElementById('dc-name').textContent = c.name;
     document.getElementById('dc-msg').textContent =
         `Container "${c.name}" and ALL its files will be permanently erased. This cannot be undone.`;
-    const okBtn = document.getElementById('dc-ok');
-    const okLabel = document.getElementById('dc-ok-label');
+    const okBtn = document.getElementById('dc-ok'),
+        okLabel = document.getElementById('dc-ok-label');
     okBtn._container = c;
     okBtn.disabled = true;
     Overlay.show('modal-del-container');
@@ -497,8 +499,8 @@ function openNewContainerModal() {
 
 /** Generate salt using WebAuthn passkey mixed with CSPRNG */
 async function _webAuthnSalt() {
-    const challenge = crypto.getRandomValues(new Uint8Array(32));
-    const userId = crypto.getRandomValues(new Uint8Array(16));
+    const challenge = crypto.getRandomValues(new Uint8Array(32)),
+        userId = crypto.getRandomValues(new Uint8Array(16));
     const cred = await navigator.credentials.create({
         publicKey: {
             challenge,
@@ -521,9 +523,9 @@ async function _webAuthnSalt() {
 }
 
 async function createContainer() {
-    const name = document.getElementById('nc-name').value.trim();
-    const pw = document.getElementById('nc-pw').value;
-    const pw2 = document.getElementById('nc-pw2').value;
+    const name = document.getElementById('nc-name').value.trim(),
+        pw = document.getElementById('nc-pw').value,
+        pw2 = document.getElementById('nc-pw2').value;
 
     if (!name) { toast('Enter a container name', 'error'); return; }
     // Allow only letters (Latin + Cyrillic), digits, spaces, and safe filename chars
@@ -547,13 +549,13 @@ async function createContainer() {
     showLoading('Creating container and deriving key...');
     Overlay.hide();
     try {
-        const salt = _hwSaltData || Array.from(crypto.getRandomValues(new Uint8Array(32)));
-        const key = await Crypto.deriveKey(pw, new Uint8Array(salt));
+        const salt = _hwSaltData || Array.from(crypto.getRandomValues(new Uint8Array(32))),
+            key = await Crypto.deriveKey(pw, new Uint8Array(salt));
         const { iv, blob } = await Crypto.makeVerification(key);
 
         VFS.init();
-        const vfsStr = JSON.stringify(VFS.toObj());
-        const { iv: vfsIv, blob: vfsBlobB64 } = await Crypto.encrypt(key, vfsStr);
+        const vfsStr = JSON.stringify(VFS.toObj()),
+            { iv: vfsIv, blob: vfsBlobB64 } = await Crypto.encrypt(key, vfsStr);
 
         const container = {
             id: uid(), name, createdAt: Date.now(),
@@ -569,12 +571,12 @@ async function createContainer() {
 }
 
 function updatePwStrength(pw) {
-    const s = pwStrength(pw);
-    const pct = [0, 20, 40, 60, 80, 100][s];
-    const colors = ['#555', '#f44747', '#ce9178', '#dcdcaa', '#6a9955', '#4ec9b0'];
-    const labels = ['', 'Very Weak', 'Weak', 'Fair', 'Strong', 'Very Strong'];
-    const bar = document.getElementById('nc-pw-strength');
-    const lbl = document.getElementById('nc-pw-strength-label');
+    const s = pwStrength(pw),
+        pct = [0, 20, 40, 60, 80, 100][s],
+        colors = ['#555', '#f44747', '#ce9178', '#dcdcaa', '#6a9955', '#4ec9b0'],
+        labels = ['', 'Very Weak', 'Weak', 'Fair', 'Strong', 'Very Strong'],
+        bar = document.getElementById('nc-pw-strength'),
+        lbl = document.getElementById('nc-pw-strength-label');
     bar.style.width = pct + '%';
     bar.style.background = colors[s];
     lbl.textContent = pw.length ? labels[s] : '';
@@ -616,18 +618,18 @@ function openUnlockView(c) {
     document.getElementById('unlock-error').innerHTML = '';
     document.getElementById('unlock-spinner').classList.remove('show');
     // Pre-fill checkbox and scope based on saved session
-    const hasSessT = !!sessionStorage.getItem('twc-s-' + c.id);
-    const hasSessW = !!localStorage.getItem('twc-s-' + c.id);
-    const remEl = document.getElementById('unlock-remember');
-    const opts = document.getElementById('remember-opts');
-    const tabEl = document.getElementById('remember-tab');
-    const brwEl = document.getElementById('remember-browser');
+    const hasSessT = !!sessionStorage.getItem('twc-s-' + c.id),
+        hasSessW = !!localStorage.getItem('twc-s-' + c.id),
+        remEl = document.getElementById('unlock-remember'),
+        opts = document.getElementById('remember-opts'),
+        tabEl = document.getElementById('remember-tab'),
+        brwEl = document.getElementById('remember-browser');
     if (remEl) {
         const remembered = hasSessT || hasSessW;
         remEl.checked = remembered;
         if (opts) {
-            const radios = opts.querySelectorAll('input[type="radio"]');
-            const labels = opts.querySelectorAll('.remember-opt');
+            const radios = opts.querySelectorAll('input[type="radio"]'),
+                labels = opts.querySelectorAll('.remember-opt');
             radios.forEach(r => r.disabled = !remembered);
             labels.forEach(l => l.classList.toggle('disabled', !remembered));
         }
@@ -652,8 +654,8 @@ async function doUnlock() {
     document.getElementById('btn-unlock').disabled = true;
 
     try {
-        const key = await Crypto.deriveKey(pw, new Uint8Array(c.salt));
-        const ok = await Crypto.checkVerification(key, c.verIv, c.verBlob);
+        const key = await Crypto.deriveKey(pw, new Uint8Array(c.salt)),
+            ok = await Crypto.checkVerification(key, c.verIv, c.verBlob);
 
         if (!ok) {
             fails.count++;
@@ -688,8 +690,8 @@ async function doUnlock() {
                 const decBuf = await Crypto.decrypt(key, Array.from(mIv), buf2b64(mBlob));
                 const manifest = JSON.parse(new TextDecoder().decode(decBuf));
                 for (const m of manifest) {
-                    const iv = Array.from(Uint8Array.from(atob(m.ivB64), ch => ch.charCodeAt(0)));
-                    const blob = bin.slice(m.offset, m.offset + m.size).buffer;
+                    const iv = Array.from(Uint8Array.from(atob(m.ivB64), ch => ch.charCodeAt(0))),
+                        blob = bin.slice(m.offset, m.offset + m.size).buffer;
                     await DB.saveFile({ id: m.id, cid: c.id, iv, blob });
                 }
                 const cleanCont = Object.assign({}, c);
@@ -771,8 +773,8 @@ async function deleteContainerConfirmed() {
 async function _resumeSession(c, pw) {
     showLoading('Restoring session...');
     try {
-        const key = await Crypto.deriveKey(pw, new Uint8Array(c.salt));
-        const ok = await Crypto.checkVerification(key, c.verIv, c.verBlob);
+        const key = await Crypto.deriveKey(pw, new Uint8Array(c.salt)),
+            ok = await Crypto.checkVerification(key, c.verIv, c.verBlob);
         if (!ok) {
             // Stored session is invalid (password changed?) — clear it and open unlock view
             sessionStorage.removeItem('twc-s-' + c.id);
@@ -797,8 +799,8 @@ async function _resumeSession(c, pw) {
                 const decBuf = await Crypto.decrypt(key, Array.from(mIv), buf2b64(mBlob));
                 const manifest = JSON.parse(new TextDecoder().decode(decBuf));
                 for (const m of manifest) {
-                    const iv = Array.from(Uint8Array.from(atob(m.ivB64), ch => ch.charCodeAt(0)));
-                    const blob = bin.slice(m.offset, m.offset + m.size).buffer;
+                    const iv = Array.from(Uint8Array.from(atob(m.ivB64), ch => ch.charCodeAt(0))),
+                        blob = bin.slice(m.offset, m.offset + m.size).buffer;
                     await DB.saveFile({ id: m.id, cid: c.id, iv, blob });
                 }
                 const cleanCont = Object.assign({}, c);

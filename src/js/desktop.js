@@ -62,8 +62,8 @@ function showCtxMenu(x, y, items) {
     menu.classList.add('show');
     const r = menu.getBoundingClientRect();
     // Account for taskbar at the bottom (36px + 1px border)
-    const taskbarH = document.querySelector('.taskbar')?.offsetHeight || 37;
-    const maxBottom = window.innerHeight - taskbarH;
+    const taskbarH = document.querySelector('.taskbar')?.offsetHeight || 37,
+        maxBottom = window.innerHeight - taskbarH;
     if (r.right > window.innerWidth) menu.style.left = Math.max(0, x - r.width) + 'px';
     if (r.bottom > maxBottom) menu.style.top = Math.max(0, y - r.height) + 'px';
 }
@@ -106,8 +106,8 @@ function showSubmenu(parentEl, items) {
                 sub2.style.position = 'fixed';
                 sub2.style.left = pr.right + 'px'; sub2.style.top = pr.top + 'px';
                 const sr = sub2.getBoundingClientRect();
-                const _taskbarH2 = document.querySelector('.taskbar')?.offsetHeight || 37;
-                const _maxB2 = window.innerHeight - _taskbarH2;
+                const _taskbarH2 = document.querySelector('.taskbar')?.offsetHeight || 37,
+                    _maxB2 = window.innerHeight - _taskbarH2;
                 if (window.innerWidth <= 640) {
                     sub2.style.left = Math.max(0, Math.min(pr.left, window.innerWidth - sr.width)) + 'px';
                     sub2.style.top = Math.min(pr.bottom, _maxB2 - sr.height) + 'px';
@@ -136,8 +136,8 @@ function showSubmenu(parentEl, items) {
     const pr = parentEl.getBoundingClientRect();
     sub.style.left = pr.right + 'px'; sub.style.top = pr.top + 'px';
     const sr = sub.getBoundingClientRect();
-    const _taskbarH = document.querySelector('.taskbar')?.offsetHeight || 37;
-    const _maxB = window.innerHeight - _taskbarH;
+    const _taskbarH = document.querySelector('.taskbar')?.offsetHeight || 37,
+        _maxB = window.innerHeight - _taskbarH;
     if (window.innerWidth <= 640) {
         // Mobile: open below parent item to prevent horizontal overflow
         sub.style.left = Math.max(0, Math.min(pr.left, window.innerWidth - sr.width)) + 'px';
@@ -165,11 +165,11 @@ function hideCtxMenu() {
 /* ============================================================
    HOVER TOOLTIP
    ============================================================ */
-let _tooltipTimer = null;
-let _tooltipEl = null;
-let _isDragging = false;
-let _touchDragActive = false; // true while touch-drag is active — suppresses contextmenu event
-let _lastTouchTs = 0;     // timestamp of last touchstart — suppresses spurious mouseenter tooltips
+let _tooltipTimer = null,
+    _tooltipEl = null,
+    _isDragging = false,
+    _touchDragActive = false, // true while touch-drag is active — suppresses contextmenu event
+    _lastTouchTs = 0;     // timestamp of last touchstart — suppresses spurious mouseenter tooltips
 
 function _startHoverTooltip(el, node) {
     if (_isDragging) return;
@@ -298,8 +298,8 @@ function openSettings() {
     document.querySelector('#settings-animations input').checked = !!s.disableAnimations;
 
     // Setup custom dropdown for auto-lock
-    const dd = document.getElementById('settings-autolock-dd');
-    const currentAl = s.autoLock || '60';
+    const dd = document.getElementById('settings-autolock-dd'),
+        currentAl = s.autoLock || '60';
 
     const updateDdUI = (val) => {
         dd.querySelectorAll('.custom-dd-opt').forEach(opt => {
@@ -310,8 +310,8 @@ function openSettings() {
     };
 
     // Remove old listeners to prevent duplicates (clone head and menu)
-    const ddHead = dd.querySelector('.custom-dd-head');
-    const newDdHead = ddHead.cloneNode(true);
+    const ddHead = dd.querySelector('.custom-dd-head'),
+        newDdHead = ddHead.cloneNode(true);
     ddHead.parentNode.replaceChild(newDdHead, ddHead);
 
     // Set initial value AFTER cloning so we update the live DOM element
@@ -323,8 +323,8 @@ function openSettings() {
         dd.classList.toggle('open');
     };
 
-    const ddMenu = dd.querySelector('.custom-dd-menu');
-    const newDdMenu = ddMenu.cloneNode(true);
+    const ddMenu = dd.querySelector('.custom-dd-menu'),
+        newDdMenu = ddMenu.cloneNode(true);
     ddMenu.parentNode.replaceChild(newDdMenu, ddMenu);
 
     newDdMenu.querySelectorAll('.custom-dd-opt').forEach(opt => {
@@ -441,10 +441,10 @@ function _renderStats() {
     });
     if (!sorted.length) chart.innerHTML = '<span style="font-size:12px;color:var(--text-dim)">No files yet</span>';
     // Storage bar
-    const storBar = document.getElementById('stats-storage-bar');
-    const used = App.container?.totalSize || 0;
-    const limit = 500 * 1024 * 1024; // 500MB display cap
-    const pctUsed = Math.min(100, Math.round(used / limit * 100));
+    const storBar = document.getElementById('stats-storage-bar'),
+        used = App.container?.totalSize || 0,
+        limit = 500 * 1024 * 1024, // 500MB display cap
+        pctUsed = Math.min(100, Math.round(used / limit * 100));
     storBar.innerHTML =
         `<div class="stats-storage-fill" style="width:${pctUsed}%"></div>` +
         `<span class="stats-storage-text">${fmtSize(used)} used</span>`;
@@ -692,14 +692,14 @@ const Desktop = {
             if (item) item.style.zIndex = '7900';
         });
 
-        const startX = e.clientX, startY = e.clientY;
-        const area = document.getElementById('desktop-area');
-        const areaRect = area.getBoundingClientRect();
-        const elRect = el.getBoundingClientRect();
-        const clickOffX = e.clientX - elRect.left;
-        const clickOffY = e.clientY - elRect.top;
-        const startScrollX = area.scrollLeft, startScrollY = area.scrollTop;
-        const startPosMap = {};
+        const startX = e.clientX, startY = e.clientY,
+            area = document.getElementById('desktop-area'),
+            areaRect = area.getBoundingClientRect(),
+            elRect = el.getBoundingClientRect(),
+            clickOffX = e.clientX - elRect.left,
+            clickOffY = e.clientY - elRect.top,
+            startScrollX = area.scrollLeft, startScrollY = area.scrollTop,
+            startPosMap = {};
         this._sel.forEach(id => {
             const item = document.querySelector(`#desktop-area > .file-item[data-id="${id}"]`);
             if (item) startPosMap[id] = { x: parseInt(item.style.left), y: parseInt(item.style.top) };
@@ -711,9 +711,9 @@ const Desktop = {
             const p = VFS.getPos(this._desktopFolder, n.id);
             if (p) occupiedAtStart.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
         });
-        let snapPreviewEls = [];
-        let fwSnapPreviewEls = [];  // snap previews inside a hovered folder-window
-        let moved = false, hoverFolder = null, hoverWin = null, lastX = e.clientX, lastY = e.clientY;
+        let snapPreviewEls = [],
+            fwSnapPreviewEls = [],  // snap previews inside a hovered folder-window
+            moved = false, hoverFolder = null, hoverWin = null, lastX = e.clientX, lastY = e.clientY;
 
         const onMove = mv => {
             lastX = mv.clientX; lastY = mv.clientY;
@@ -913,11 +913,11 @@ const Desktop = {
                             return;
                         }
                         // Smart drop: calculate position in target window at cursor location
-                        const targetArea = winTarget.el.querySelector('.fw-area');
-                        const tRect = targetArea.getBoundingClientRect();
-                        const dropPosX = lastX - tRect.left + targetArea.scrollLeft - clickOffX;
-                        const dropPosY = lastY - tRect.top + targetArea.scrollTop - clickOffY;
-                        const occupied = new Map();
+                        const targetArea = winTarget.el.querySelector('.fw-area'),
+                            tRect = targetArea.getBoundingClientRect(),
+                            dropPosX = lastX - tRect.left + targetArea.scrollLeft - clickOffX,
+                            dropPosY = lastY - tRect.top + targetArea.scrollTop - clickOffY,
+                            occupied = new Map();
                         VFS.children(winTarget.folderId).forEach(n => {
                             const p = VFS.getPos(winTarget.folderId, n.id);
                             if (p) occupied.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
@@ -1068,10 +1068,10 @@ const Desktop = {
         // Only active on touch devices — no-op on desktop
         if (typeof window.ontouchstart === 'undefined' && !navigator.maxTouchPoints) return;
 
-        let _touchDragNode = null, _touchDragEl = null;
-        let _tdStartX = 0, _tdStartY = 0, _tdOffX = 0, _tdOffY = 0;
-        let _tdMoved = false, _tdTimer = null, _tdActive = false;
-        let _tdStartPos = {}, _tdHoverFolder = null;
+        let _touchDragNode = null, _touchDragEl = null,
+            _tdStartX = 0, _tdStartY = 0, _tdOffX = 0, _tdOffY = 0,
+            _tdMoved = false, _tdTimer = null, _tdActive = false,
+            _tdStartPos = {}, _tdHoverFolder = null;
 
         area.addEventListener('touchstart', e => {
             if (e.touches.length !== 1) return;
@@ -1350,9 +1350,9 @@ const Desktop = {
 
     updateTaskbar() {
         if (!App.container) return;
-        const tot = App.container.totalSize || 0;
-        const pct = Math.min(tot / CONTAINER_LIMIT * 100, 100);
-        const cls = pct > 90 ? 'danger' : pct > 70 ? 'warn' : '';
+        const tot = App.container.totalSize || 0,
+            pct = Math.min(tot / CONTAINER_LIMIT * 100, 100),
+            cls = pct > 90 ? 'danger' : pct > 70 ? 'warn' : '';
         document.getElementById('taskbar-name').textContent = App.container.name;
         document.getElementById('taskbar-size-text').textContent = `${fmtSize(tot)} / ${fmtSize(CONTAINER_LIMIT)}`;
         document.getElementById('taskbar-size-pct').textContent = pct.toFixed(1) + '%';
@@ -1421,8 +1421,8 @@ const Desktop = {
         });
 
         /* ---- Touch: rubber-band select on empty area + long-press context menu ---- */
-        let _lpTimer = null;
-        let _rbBand = null, _rbSX = 0, _rbSY = 0, _rbActive = false, _rbMoved = false, _rbOnEmpty = false;
+        let _lpTimer = null,
+            _rbBand = null, _rbSX = 0, _rbSY = 0, _rbActive = false, _rbMoved = false, _rbOnEmpty = false;
 
         area.addEventListener('touchstart', e => {
             if (e.touches.length !== 1) return;
@@ -1465,13 +1465,13 @@ const Desktop = {
             }
             if (_rbActive && _rbBand) {
                 if (e.cancelable) e.preventDefault();
-                const aR = area.getBoundingClientRect();
-                const sx = _rbSX - aR.left + area.scrollLeft;
-                const sy = _rbSY - aR.top + area.scrollTop;
-                const cx = t.clientX - aR.left + area.scrollLeft;
-                const cy = t.clientY - aR.top + area.scrollTop;
-                const x = Math.min(sx, cx), y = Math.min(sy, cy);
-                const w = Math.abs(cx - sx), h = Math.abs(cy - sy);
+                const aR = area.getBoundingClientRect(),
+                    sx = _rbSX - aR.left + area.scrollLeft,
+                    sy = _rbSY - aR.top + area.scrollTop,
+                    cx = t.clientX - aR.left + area.scrollLeft,
+                    cy = t.clientY - aR.top + area.scrollTop,
+                    x = Math.min(sx, cx), y = Math.min(sy, cy),
+                    w = Math.abs(cx - sx), h = Math.abs(cy - sy);
                 _rbBand.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
                 const bx2 = x + w, by2 = y + h;
                 area.querySelectorAll(':scope > .file-item').forEach(item => {
@@ -1501,20 +1501,20 @@ const Desktop = {
     },
 
     _startRubberBand(e) {
-        const area = document.getElementById('desktop-area');
-        const rect = area.getBoundingClientRect();
-        const sx = e.clientX - rect.left + area.scrollLeft;
-        const sy = e.clientY - rect.top + area.scrollTop;
-        const band = document.createElement('div');
+        const area = document.getElementById('desktop-area'),
+            rect = area.getBoundingClientRect(),
+            sx = e.clientX - rect.left + area.scrollLeft,
+            sy = e.clientY - rect.top + area.scrollTop,
+            band = document.createElement('div');
         band.className = 'rubberband';
         band.style.cssText = `left:${sx}px;top:${sy}px;width:0;height:0`;
         area.appendChild(band);
 
         const onMove = mv => {
-            const cx = mv.clientX - rect.left + area.scrollLeft;
-            const cy = mv.clientY - rect.top + area.scrollTop;
-            const x = Math.min(sx, cx), y = Math.min(sy, cy);
-            const w = Math.abs(cx - sx), h = Math.abs(cy - sy);
+            const cx = mv.clientX - rect.left + area.scrollLeft,
+                cy = mv.clientY - rect.top + area.scrollTop,
+                x = Math.min(sx, cx), y = Math.min(sy, cy),
+                w = Math.abs(cx - sx), h = Math.abs(cy - sy);
             band.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
             const bx1 = x, by1 = y, bx2 = x + w, by2 = y + h;
             document.querySelectorAll('#desktop-area > .file-item').forEach(item => {
@@ -1620,11 +1620,11 @@ class FolderWindow {
         el.style.zIndex = WinManager.nextZ();
 
         // Cascade position
-        const area = document.getElementById('desktop-area');
-        const count = WinManager._wins.length;
-        const defW = 680, defH = 440;
-        const cx = Math.max(20, Math.min((area.clientWidth - defW) / 2 + count * 28, area.clientWidth - defW - 10));
-        const cy = Math.max(20, Math.min((area.clientHeight - defH) / 2 + count * 28, area.clientHeight - defH - 10));
+        const area = document.getElementById('desktop-area'),
+            count = WinManager._wins.length,
+            defW = 680, defH = 440,
+            cx = Math.max(20, Math.min((area.clientWidth - defW) / 2 + count * 28, area.clientWidth - defW - 10)),
+            cy = Math.max(20, Math.min((area.clientHeight - defH) / 2 + count * 28, area.clientHeight - defH - 10));
         el.style.left = cx + 'px';
         el.style.top = cy + 'px';
         el.style.width = defW + 'px';
@@ -1771,8 +1771,8 @@ class FolderWindow {
         });
 
         /* ---- Touch: rubber-band select on empty area + long-press context menu ---- */
-        let _fwLpTimer = null;
-        let _fwRbBand = null, _fwRbSX = 0, _fwRbSY = 0, _fwRbActive = false, _fwRbMoved = false, _fwRbOnEmpty = false;
+        let _fwLpTimer = null,
+            _fwRbBand = null, _fwRbSX = 0, _fwRbSY = 0, _fwRbActive = false, _fwRbMoved = false, _fwRbOnEmpty = false;
 
         area.addEventListener('touchstart', e => {
             if (e.touches.length !== 1) return;
@@ -1815,13 +1815,13 @@ class FolderWindow {
             }
             if (_fwRbActive && _fwRbBand) {
                 if (e.cancelable) e.preventDefault();
-                const aR = area.getBoundingClientRect();
-                const sx = _fwRbSX - aR.left + area.scrollLeft;
-                const sy = _fwRbSY - aR.top + area.scrollTop;
-                const cx = t.clientX - aR.left + area.scrollLeft;
-                const cy = t.clientY - aR.top + area.scrollTop;
-                const x = Math.min(sx, cx), y = Math.min(sy, cy);
-                const w = Math.abs(cx - sx), h = Math.abs(cy - sy);
+                const aR = area.getBoundingClientRect(),
+                    sx = _fwRbSX - aR.left + area.scrollLeft,
+                    sy = _fwRbSY - aR.top + area.scrollTop,
+                    cx = t.clientX - aR.left + area.scrollLeft,
+                    cy = t.clientY - aR.top + area.scrollTop,
+                    x = Math.min(sx, cx), y = Math.min(sy, cy),
+                    w = Math.abs(cx - sx), h = Math.abs(cy - sy);
                 _fwRbBand.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
                 const bx2 = x + w, by2 = y + h;
                 area.querySelectorAll('.file-item').forEach(item => {
@@ -1863,9 +1863,9 @@ class FolderWindow {
         handle.addEventListener('mousedown', e => {
             if (e.button !== 0) return;
             e.preventDefault();
-            const startMouseX = e.clientX, startMouseY = e.clientY;
-            const startLeft = parseInt(this.el.style.left) || 0;
-            const startTop = parseInt(this.el.style.top) || 0;
+            const startMouseX = e.clientX, startMouseY = e.clientY,
+                startLeft = parseInt(this.el.style.left) || 0,
+                startTop = parseInt(this.el.style.top) || 0;
             const onMove = mv => {
                 const area = document.getElementById('desktop-area');
                 const maxL = area.clientWidth - this.el.offsetWidth;
@@ -2006,13 +2006,13 @@ class FolderWindow {
 
         const fwArea = this.el.querySelector('.fw-area');
         fwArea.focus();
-        const startX = e.clientX, startY = e.clientY;
-        const startScrollX = fwArea.scrollLeft, startScrollY = fwArea.scrollTop;
+        const startX = e.clientX, startY = e.clientY,
+            startScrollX = fwArea.scrollLeft, startScrollY = fwArea.scrollTop;
         // Remember click offset within the icon for ghost positioning
-        const elRect = el.getBoundingClientRect();
-        const clickOffX = e.clientX - elRect.left;
-        const clickOffY = e.clientY - elRect.top;
-        const startPosMap = {};
+        const elRect = el.getBoundingClientRect(),
+            clickOffX = e.clientX - elRect.left,
+            clickOffY = e.clientY - elRect.top,
+            startPosMap = {};
         this.selection.forEach(id => {
             const item = fwArea.querySelector(`.file-item[data-id="${id}"]`);
             if (item) startPosMap[id] = { x: parseInt(item.style.left), y: parseInt(item.style.top) };
@@ -2024,23 +2024,23 @@ class FolderWindow {
             const p = VFS.getPos(this.folderId, n.id);
             if (p) fwOccupiedAtStart.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
         });
-        let snapPreviewEls = [];
-        let deskSnapPreviewEls = []; // snap previews on desktop when dragging out of window
-        let winSnapPreviewEls = [];  // snap previews inside a target folder window
-        let moved = false, escaped = false, hoverFolder = null, hoverWin = null;
+        let snapPreviewEls = [],
+            deskSnapPreviewEls = [], // snap previews on desktop when dragging out of window
+            winSnapPreviewEls = [],  // snap previews inside a target folder window
+            moved = false, escaped = false, hoverFolder = null, hoverWin = null;
         // Ghost clones placed in desktop-area when dragging outside fw
         let ghostEls = [];
 
         const fwRect = () => this.el.getBoundingClientRect();
 
         const onMove = mv => {
-            const r = fwRect();
-            const fwAreaRect = fwArea.getBoundingClientRect();
-            const mainPos = startPosMap[node.id];
-            const targetMainX = mv.clientX - fwAreaRect.left + fwArea.scrollLeft - clickOffX;
-            const targetMainY = mv.clientY - fwAreaRect.top + fwArea.scrollTop - clickOffY;
-            const dx = targetMainX - mainPos.x;
-            const dy = targetMainY - mainPos.y;
+            const r = fwRect(),
+                fwAreaRect = fwArea.getBoundingClientRect(),
+                mainPos = startPosMap[node.id],
+                targetMainX = mv.clientX - fwAreaRect.left + fwArea.scrollLeft - clickOffX,
+                targetMainY = mv.clientY - fwAreaRect.top + fwArea.scrollTop - clickOffY,
+                dx = targetMainX - mainPos.x,
+                dy = targetMainY - mainPos.y;
             if (!moved && Math.abs(mv.clientX - startX) + Math.abs(mv.clientY - startY) > 4) {
                 moved = true; _isDragging = true; _cancelHoverTooltip();
             }
@@ -2098,9 +2098,9 @@ class FolderWindow {
                 // Clicked item follows cursor; others preserve relative layout
                 const deskArea = document.getElementById('desktop-area');
                 const deskRect = deskArea.getBoundingClientRect();
-                const baseX = mv.clientX - deskRect.left + deskArea.scrollLeft - clickOffX;
-                const baseY = mv.clientY - deskRect.top + deskArea.scrollTop - clickOffY;
-                const mainSp = startPosMap[node.id];
+                const baseX = mv.clientX - deskRect.left + deskArea.scrollLeft - clickOffX,
+                    baseY = mv.clientY - deskRect.top + deskArea.scrollTop - clickOffY,
+                    mainSp = startPosMap[node.id];
                 ghostEls.forEach(g => {
                     const gid = g.dataset.ghostFor;
                     const sp = startPosMap[gid];
@@ -2203,12 +2203,12 @@ class FolderWindow {
                     });
                 } else {
                     winSnapPreviewEls.forEach(p => p.style.display = 'none');
-                    const deskArea = document.getElementById('desktop-area');
-                    const deskRect = deskArea.getBoundingClientRect();
-                    const baseDropX = mv.clientX - deskRect.left + deskArea.scrollLeft - clickOffX;
-                    const baseDropY = mv.clientY - deskRect.top + deskArea.scrollTop - clickOffY;
-                    const _deskFidSnap = Desktop._desktopFolder;
-                    const deskOcc = new Map();
+                    const deskArea = document.getElementById('desktop-area'),
+                        deskRect = deskArea.getBoundingClientRect(),
+                        baseDropX = mv.clientX - deskRect.left + deskArea.scrollLeft - clickOffX,
+                        baseDropY = mv.clientY - deskRect.top + deskArea.scrollTop - clickOffY,
+                        _deskFidSnap = Desktop._desktopFolder,
+                        deskOcc = new Map();
                     VFS.children(_deskFidSnap).forEach(n => {
                         const p = VFS.getPos(_deskFidSnap, n.id);
                         if (p) deskOcc.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
@@ -2402,12 +2402,12 @@ class FolderWindow {
                     if (typeof WinManager !== 'undefined') WinManager.renderAll();
                 } else {
                     // Drop onto desktop
-                    const deskArea = document.getElementById('desktop-area');
-                    const deskRect = deskArea.getBoundingClientRect();
-                    const dropPosX = _lastFwDragX - deskRect.left + deskArea.scrollLeft - clickOffX;
-                    const dropPosY = _lastFwDragY - deskRect.top + deskArea.scrollTop - clickOffY;
-                    const deskFid = Desktop._desktopFolder;
-                    const occupied = new Map();
+                    const deskArea = document.getElementById('desktop-area'),
+                        deskRect = deskArea.getBoundingClientRect(),
+                        dropPosX = _lastFwDragX - deskRect.left + deskArea.scrollLeft - clickOffX,
+                        dropPosY = _lastFwDragY - deskRect.top + deskArea.scrollTop - clickOffY,
+                        deskFid = Desktop._desktopFolder,
+                        occupied = new Map();
                     VFS.children(deskFid).forEach(n => {
                         const p = VFS.getPos(deskFid, n.id);
                         if (p) occupied.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
@@ -2519,8 +2519,8 @@ class FolderWindow {
         // Track last mouse position for use in onUp
         let _lastFwDragX = e.clientX, _lastFwDragY = e.clientY;
         const _trackMove = mv => { _lastFwDragX = mv.clientX; _lastFwDragY = mv.clientY; };
-        const origOnMove = onMove;
-        const wrappedOnMove = mv => { _trackMove(mv); origOnMove(mv); };
+        const origOnMove = onMove,
+            wrappedOnMove = mv => { _trackMove(mv); origOnMove(mv); };
 
         document.addEventListener('mousemove', wrappedOnMove);
         document.addEventListener('mouseup', function cleanup(ev) {
@@ -2555,10 +2555,10 @@ class FolderWindow {
     _initFwTouchDrag(area) {
         if (typeof window.ontouchstart === 'undefined' && !navigator.maxTouchPoints) return;
 
-        let _tdNode = null, _tdEl = null;
-        let _tdSX = 0, _tdSY = 0, _tdOffX = 0, _tdOffY = 0;
-        let _tdMoved = false, _tdTimer = null, _tdActive = false;
-        let _tdStartPos = {}, _tdHover = null;
+        let _tdNode = null, _tdEl = null,
+            _tdSX = 0, _tdSY = 0, _tdOffX = 0, _tdOffY = 0,
+            _tdMoved = false, _tdTimer = null, _tdActive = false,
+            _tdStartPos = {}, _tdHover = null;
 
         area.addEventListener('touchstart', e => {
             if (e.touches.length !== 1) return;
@@ -2695,18 +2695,18 @@ class FolderWindow {
 
     /* ---- RUBBER BAND selection ---- */
     _startRubberBand(e) {
-        const area = this.el.querySelector('.fw-area');
-        const rect = area.getBoundingClientRect();
-        const sx = e.clientX - rect.left + area.scrollLeft;
-        const sy = e.clientY - rect.top + area.scrollTop;
-        const band = document.createElement('div');
+        const area = this.el.querySelector('.fw-area'),
+            rect = area.getBoundingClientRect(),
+            sx = e.clientX - rect.left + area.scrollLeft,
+            sy = e.clientY - rect.top + area.scrollTop,
+            band = document.createElement('div');
         band.className = 'rubberband';
         band.style.cssText = `left:${sx}px;top:${sy}px;width:0;height:0`;
         area.appendChild(band);
         const onMove = mv => {
-            const cx = mv.clientX - rect.left + area.scrollLeft;
-            const cy = mv.clientY - rect.top + area.scrollTop;
-            const x = Math.min(sx, cx), y = Math.min(sy, cy), w = Math.abs(cx - sx), h = Math.abs(cy - sy);
+            const cx = mv.clientX - rect.left + area.scrollLeft,
+                cy = mv.clientY - rect.top + area.scrollTop,
+                x = Math.min(sx, cx), y = Math.min(sy, cy), w = Math.abs(cx - sx), h = Math.abs(cy - sy);
             band.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
             area.querySelectorAll('.file-item').forEach(item => {
                 const ix = parseInt(item.style.left), iy = parseInt(item.style.top);
@@ -2821,8 +2821,8 @@ class FolderWindow {
         handle.addEventListener('mousedown', e => {
             if (e.button !== 0) return;
             e.preventDefault(); e.stopPropagation();
-            const startX = e.clientX, startY = e.clientY;
-            const startW = this.el.offsetWidth, startH = this.el.offsetHeight;
+            const startX = e.clientX, startY = e.clientY,
+                startW = this.el.offsetWidth, startH = this.el.offsetHeight;
             const onMove = mv => {
                 this.el.style.width = Math.max(420, Math.min(1400, startW + mv.clientX - startX)) + 'px';
                 this.el.style.height = Math.max(260, Math.min(900, startH + mv.clientY - startY)) + 'px';

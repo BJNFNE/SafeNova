@@ -98,8 +98,8 @@ const VFS = (() => {
     }
 
     function autoPos(pid, idx, area) {
-        const W = (area && area.clientWidth) || 800;
-        const cols = Math.max(1, Math.floor((W - 16) / GRID_X));
+        const W = (area && area.clientWidth) || 800,
+            cols = Math.max(1, Math.floor((W - 16) / GRID_X));
         // Build set of occupied grid cells
         const occupied = new Set();
         Object.values(_pos[pid] || {}).forEach(p => {

@@ -4,13 +4,13 @@
    CONSOLE SECURITY WARNING
    ============================================================ */
 (function consoleSecurityWarning() {
-    const W   = 60;
-    const pad = s => s + ' '.repeat(Math.max(0, W - s.length));
-    const row = s => `║ ${pad(s)} ║`;
-    const top = `╔${'═'.repeat(W + 2)}╗`;
-    const bot = `╚${'═'.repeat(W + 2)}╝`;
-    const sep = `╠${'═'.repeat(W + 2)}╣`;
-    const _   = row('');
+    const W = 60,
+        pad = s => s + ' '.repeat(Math.max(0, W - s.length)),
+        row = s => `║ ${pad(s)} ║`,
+        top = `╔${'═'.repeat(W + 2)}╗`,
+        bot = `╚${'═'.repeat(W + 2)}╝`,
+        sep = `╠${'═'.repeat(W + 2)}╣`,
+        _ = row('');
 
     const box = [
         top,
@@ -49,8 +49,8 @@
    PASSWORD EYE TOGGLE
    ============================================================ */
 function togglePwEye(inputId, btnId) {
-    const input = document.getElementById(inputId);
-    const btn = document.getElementById(btnId);
+    const input = document.getElementById(inputId),
+        btn = document.getElementById(btnId);
     if (input.type === 'password') {
         input.type = 'text';
         btn.style.color = 'var(--accent)';
@@ -109,8 +109,8 @@ function initEvents() {
     document.getElementById('unlock-remember').addEventListener('change', e => {
         const opts = document.getElementById('remember-opts');
         if (!opts) return;
-        const radios = opts.querySelectorAll('input[type="radio"]');
-        const labels = opts.querySelectorAll('.remember-opt');
+        const radios = opts.querySelectorAll('input[type="radio"]'),
+            labels = opts.querySelectorAll('.remember-opt');
         radios.forEach(r => r.disabled = !e.target.checked);
         labels.forEach(l => l.classList.toggle('disabled', !e.target.checked));
     });
@@ -242,8 +242,8 @@ function initEvents() {
         const dd = document.getElementById('topbar-dropdown');
         if (!burger || !dd) return;
 
-        const _close = () => dd.classList.remove('open');
-        const _toggle = () => dd.classList.toggle('open');
+        const _close = () => dd.classList.remove('open'),
+            _toggle = () => dd.classList.toggle('open');
 
         burger.addEventListener('click', e => { e.stopPropagation(); _toggle(); });
 

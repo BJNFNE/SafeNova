@@ -137,8 +137,8 @@ async function uploadEntries(dataTransferItems, targetFolderId) {
         return;
     }
 
-    const fileEntries = entries.filter(e => e.isFile);
-    const folderEntries = entries.filter(e => e.isDirectory);
+    const fileEntries = entries.filter(e => e.isFile),
+        folderEntries = entries.filter(e => e.isDirectory);
     const label = [
         fileEntries.length && `${fileEntries.length} file${fileEntries.length !== 1 ? 's' : ''}`,
         folderEntries.length && `${folderEntries.length} folder${folderEntries.length !== 1 ? 's' : ''}`,
@@ -304,8 +304,8 @@ async function createTextFile() {
     const name = document.getElementById('nf-name').value.trim();
     if (!name) { toast('Enter a file name', 'error'); return; }
     // Capture context BEFORE Overlay.hide() clears it
-    const targetFolder = App.folder;
-    const winCtx = App._winCtx;
+    const targetFolder = App.folder,
+        winCtx = App._winCtx;
     // Duplicate name check
     if (VFS.hasChildNamed(targetFolder, name)) {
         toast(`“${name}” already exists in this folder`, 'error'); return;
@@ -365,8 +365,8 @@ async function createFolder() {
     const name = document.getElementById('nd-name').value.trim();
     if (!name) { toast('Enter a folder name', 'error'); return; }
     // Capture context BEFORE Overlay.hide() clears it
-    const targetFolder = App.folder;
-    const winCtx = App._winCtx;
+    const targetFolder = App.folder,
+        winCtx = App._winCtx;
     // Duplicate name check
     if (VFS.hasChildNamed(targetFolder, name)) {
         toast(`“${name}” already exists in this folder`, 'error'); return;
@@ -567,8 +567,8 @@ function sortIcons(by = 'name', dir = 'asc', winCtx = null) {
         return dir === 'desc' ? -cmp : cmp;
     });
     // Compute sequential grid positions directly (don't use autoPos which sees old positions as occupied)
-    const W = (area && area.clientWidth) || 800;
-    const cols = Math.max(1, Math.floor((W - 16) / GRID_X));
+    const W = (area && area.clientWidth) || 800,
+        cols = Math.max(1, Math.floor((W - 16) / GRID_X));
     items.forEach((n, i) => {
         const col = i % cols, row = Math.floor(i / cols);
         const x = 8 + col * GRID_X, y = 8 + row * GRID_Y;
@@ -770,8 +770,8 @@ let _viewerBlob = null;
 function openViewer(node, buf, mime) {
     const content = document.getElementById('viewer-content');
     content.innerHTML = '';
-    const blobObj = new Blob([buf], { type: mime });
-    const url = URL.createObjectURL(blobObj);
+    const blobObj = new Blob([buf], { type: mime }),
+        url = URL.createObjectURL(blobObj);
     _viewerBlob = { url, node };
 
     document.getElementById('viewer-title').textContent = node.name;
@@ -989,22 +989,22 @@ function _readZip(buffer) {
         if (view.getUint32(i, true) === 0x06054b50) { eocdOffset = i; break; }
     }
     if (eocdOffset < 0) throw new Error('Not a valid ZIP file');
-    const cdCount = view.getUint16(eocdOffset + 8, true);
-    const cdOffset = view.getUint32(eocdOffset + 16, true);
-    const dec = new TextDecoder('utf-8');
-    const entries = {};
+    const cdCount = view.getUint16(eocdOffset + 8, true),
+        cdOffset = view.getUint32(eocdOffset + 16, true),
+        dec = new TextDecoder('utf-8'),
+        entries = {};
     let pos = cdOffset;
     for (let i = 0; i < cdCount; i++) {
         if (view.getUint32(pos, true) !== 0x02014b50) break;
-        const fnLen = view.getUint16(pos + 28, true);
-        const exLen = view.getUint16(pos + 30, true);
-        const cmLen = view.getUint16(pos + 32, true);
-        const lhOff = view.getUint32(pos + 42, true);
-        const fn = dec.decode(u8.subarray(pos + 46, pos + 46 + fnLen));
-        const lhFnLen = view.getUint16(lhOff + 26, true);
-        const lhExLen = view.getUint16(lhOff + 28, true);
-        const dataOff = lhOff + 30 + lhFnLen + lhExLen;
-        const dataLen = view.getUint32(lhOff + 22, true);
+        const fnLen = view.getUint16(pos + 28, true),
+            exLen = view.getUint16(pos + 30, true),
+            cmLen = view.getUint16(pos + 32, true),
+            lhOff = view.getUint32(pos + 42, true),
+            fn = dec.decode(u8.subarray(pos + 46, pos + 46 + fnLen)),
+            lhFnLen = view.getUint16(lhOff + 26, true),
+            lhExLen = view.getUint16(lhOff + 28, true),
+            dataOff = lhOff + 30 + lhFnLen + lhExLen,
+            dataLen = view.getUint32(lhOff + 22, true);
         entries[fn] = u8.slice(dataOff, dataOff + dataLen);
         pos += 46 + fnLen + exLen + cmLen;
     }
@@ -1153,8 +1153,8 @@ function _askExportPassword(c) {
             const btnOk = document.getElementById('exp-ok');
             btnOk.disabled = true;
             try {
-                const key = await Crypto.deriveKey(pw, new Uint8Array(c.salt));
-                const ok = await Crypto.checkVerification(key, c.verIv, c.verBlob);
+                const key = await Crypto.deriveKey(pw, new Uint8Array(c.salt)),
+                    ok = await Crypto.checkVerification(key, c.verIv, c.verBlob);
                 if (!ok) { errEl.textContent = 'Incorrect password'; btnOk.disabled = false; return; }
                 cleanup();
                 resolve(key);
@@ -1174,9 +1174,9 @@ function _askExportPassword(c) {
 async function exportContainerFile(c) {
     showLoading('Exporting container…');
     try {
-        const vfsRec = await DB.getVFS(c.id);
-        const fileRecs = await DB.getFilesByCid(c.id);
-        const now = Date.now();
+        const vfsRec = await DB.getVFS(c.id),
+            fileRecs = await DB.getFilesByCid(c.id),
+            now = Date.now();
 
         // Build file manifest and workspace.bin
         const blobParts = [];
@@ -1204,17 +1204,17 @@ async function exportContainerFile(c) {
             if (!key) return;
             showLoading('Exporting container\u2026');
         }
-        const encManifest = await Crypto.encrypt(key, manifestJson);
-        const encManifestIv = new Uint8Array(encManifest.iv);
-        const encManifestBlob = new Uint8Array(b642buf(encManifest.blob));
+        const encManifest = await Crypto.encrypt(key, manifestJson),
+            encManifestIv = new Uint8Array(encManifest.iv),
+            encManifestBlob = new Uint8Array(b642buf(encManifest.blob));
 
         // VFS bytes → meta/0 (iv raw), meta/1 (blob raw)
-        const vfsIvData = vfsRec ? new Uint8Array(vfsRec.iv) : new Uint8Array(0);
-        const vfsBlobData = vfsRec ? new Uint8Array(b642buf(vfsRec.blob)) : new Uint8Array(0);
+        const vfsIvData = vfsRec ? new Uint8Array(vfsRec.iv) : new Uint8Array(0),
+            vfsBlobData = vfsRec ? new Uint8Array(b642buf(vfsRec.blob)) : new Uint8Array(0);
 
         // container.xml — file manifest is encrypted, no <files> in plaintext
-        const saltB64 = btoa(String.fromCharCode(...new Uint8Array(c.salt)));
-        const verIvB64 = btoa(String.fromCharCode(...new Uint8Array(c.verIv)));
+        const saltB64 = btoa(String.fromCharCode(...new Uint8Array(c.salt))),
+            verIvB64 = btoa(String.fromCharCode(...new Uint8Array(c.verIv)));
         const xmlLines = [
             '<?xml version="1.0" encoding="UTF-8"?>',
             `<safenova version="3" exportedAt="${now}">`,
@@ -1251,31 +1251,31 @@ async function importContainerFile(file) {
     if (!file) return;
     showLoading('Importing container…');
     try {
-        const arrayBuf = await file.arrayBuffer();
-        const u8first = new Uint8Array(arrayBuf, 0, 2);
-        const isZip = u8first[0] === 0x50 && u8first[1] === 0x4B;
+        const arrayBuf = await file.arrayBuffer(),
+            u8first = new Uint8Array(arrayBuf, 0, 2),
+            isZip = u8first[0] === 0x50 && u8first[1] === 0x4B;
 
         if (isZip) {
             const entries = _readZip(arrayBuf);
             if (!entries['container.xml'] || !entries['meta/0'] || !entries['meta/1'] || !entries['safenova_efs/workspace.bin'])
                 throw new Error('Invalid SafeNova file: missing required entries');
 
-            const xmlText = new TextDecoder('utf-8').decode(entries['container.xml']);
-            const doc = new DOMParser().parseFromString(xmlText, 'text/xml');
+            const xmlText = new TextDecoder('utf-8').decode(entries['container.xml']),
+                doc = new DOMParser().parseFromString(xmlText, 'text/xml');
             const getText = (parent, sel) => { const el = parent.querySelector(sel); return el ? el.textContent.trim() : null; };
 
-            const nameRaw = getText(doc, 'container > name');
-            const createdAt = parseInt(getText(doc, 'container > createdAt') || '0', 10);
-            const saltB64 = getText(doc, 'container > salt');
-            const verIvB64 = getText(doc, 'container > verIv');
-            const verBlob = getText(doc, 'container > verBlob');
-            const totalSize = parseInt(getText(doc, 'container > totalSize') || '0', 10);
+            const nameRaw = getText(doc, 'container > name'),
+                createdAt = parseInt(getText(doc, 'container > createdAt') || '0', 10),
+                saltB64 = getText(doc, 'container > salt'),
+                verIvB64 = getText(doc, 'container > verIv'),
+                verBlob = getText(doc, 'container > verBlob'),
+                totalSize = parseInt(getText(doc, 'container > totalSize') || '0', 10);
 
             if (!nameRaw || !saltB64 || !verIvB64 || !verBlob)
                 throw new Error('Invalid container.xml: missing required fields');
 
-            const salt = Array.from(Uint8Array.from(atob(saltB64), ch => ch.charCodeAt(0)));
-            const verIv = Array.from(Uint8Array.from(atob(verIvB64), ch => ch.charCodeAt(0)));
+            const salt = Array.from(Uint8Array.from(atob(saltB64), ch => ch.charCodeAt(0))),
+                verIv = Array.from(Uint8Array.from(atob(verIvB64), ch => ch.charCodeAt(0)));
 
             // Detect format version — v3 has encrypted file manifest
             const filesEl = doc.querySelector('files');
@@ -1318,9 +1318,9 @@ async function importContainerFile(file) {
             while (existing.find(c => c.name.toLowerCase() === name.toLowerCase()))
                 name = nameRaw + ' (' + suffix++ + ')';
 
-            const vfsIvArr = Array.from(entries['meta/0']);
-            const vfsBlobB64 = buf2b64(entries['meta/1']);
-            const workspace = entries['safenova_efs/workspace.bin'];
+            const vfsIvArr = Array.from(entries['meta/0']),
+                vfsBlobB64 = buf2b64(entries['meta/1']),
+                workspace = entries['safenova_efs/workspace.bin'];
 
             const newCid = uid();
             const newCont = { id: newCid, name, createdAt, salt, verIv, verBlob, totalSize };
@@ -1329,8 +1329,8 @@ async function importContainerFile(file) {
             await DB.saveVFS(newCid, vfsIvArr, vfsBlobB64);
             try {
                 for (const m of fileManifest) {
-                    const iv = Array.from(Uint8Array.from(atob(m.ivB64), ch => ch.charCodeAt(0)));
-                    const blob = workspace.slice(m.offset, m.offset + m.size).buffer;
+                    const iv = Array.from(Uint8Array.from(atob(m.ivB64), ch => ch.charCodeAt(0))),
+                        blob = workspace.slice(m.offset, m.offset + m.size).buffer;
                     await DB.saveFile({ id: m.id, cid: newCid, iv, blob });
                     savedIds.push(m.id);
                 }
@@ -1371,11 +1371,11 @@ function _askImportPassword(containerName, salt, verIv, verBlob, zipEntries) {
             pwInput.onkeydown = null;
         };
 
-        const btnOk = document.getElementById('imp-ok');
-        const btnCancel = document.getElementById('imp-cancel');
-        const btnClose = document.getElementById('imp-close');
-        const pwInput = document.getElementById('imp-pw');
-        const errEl = document.getElementById('imp-error');
+        const btnOk = document.getElementById('imp-ok'),
+            btnCancel = document.getElementById('imp-cancel'),
+            btnClose = document.getElementById('imp-close'),
+            pwInput = document.getElementById('imp-pw'),
+            errEl = document.getElementById('imp-error');
 
         const doImport = async () => {
             const pw = pwInput.value;
@@ -1383,16 +1383,16 @@ function _askImportPassword(containerName, salt, verIv, verBlob, zipEntries) {
             errEl.textContent = '';
             btnOk.disabled = true;
             try {
-                const key = await Crypto.deriveKey(pw, new Uint8Array(salt));
-                const ok = await Crypto.checkVerification(key, verIv, verBlob);
+                const key = await Crypto.deriveKey(pw, new Uint8Array(salt)),
+                    ok = await Crypto.checkVerification(key, verIv, verBlob);
                 if (!ok) {
                     errEl.textContent = 'Incorrect password';
                     btnOk.disabled = false;
                     return;
                 }
                 // Decrypt file manifest from meta/2 (iv) + meta/3 (blob)
-                const mIv = Array.from(zipEntries['meta/2']);
-                const mBlob = buf2b64(zipEntries['meta/3']);
+                const mIv = Array.from(zipEntries['meta/2']),
+                    mBlob = buf2b64(zipEntries['meta/3']);
                 const decBuf = await Crypto.decrypt(key, mIv, mBlob);
                 const manifest = JSON.parse(new TextDecoder().decode(decBuf));
                 cleanup();
@@ -1421,16 +1421,17 @@ async function generateThumb(node) {
         const mime = node.mime || getMime(node.name);
         if (!isImage(mime)) return null;
 
-        const blob = new Blob([buf], { type: mime });
-        const url = URL.createObjectURL(blob);
+        const blob = new Blob([buf], { type: mime }),
+            url = URL.createObjectURL(blob);
         return new Promise(res => {
             const img = new Image();
             img.onload = () => {
                 const canvas = document.createElement('canvas');
                 canvas.width = canvas.height = 56;
                 const ctx = canvas.getContext('2d');
-                const scale = Math.min(56 / img.width, 56 / img.height);
-                const w = img.width * scale, h = img.height * scale;
+                const scale = Math.min(56 / img.width, 56 / img.height),
+                    w = img.width * scale,
+                    h = img.height * scale;
                 ctx.fillStyle = '#2d2d30'; ctx.fillRect(0, 0, 56, 56);
                 ctx.drawImage(img, (56 - w) / 2, (56 - h) / 2, w, h);
                 URL.revokeObjectURL(url);

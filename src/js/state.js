@@ -172,13 +172,13 @@ async function updateStorageInfo() {
     try {
         if (!navigator.storage?.estimate) return;
         const est = await navigator.storage.estimate();
-        const used = est.usage || 0;
-        const quota = est.quota || 0;
-        const available = quota - used;
+        const used = est.usage || 0,
+            quota = est.quota || 0,
+            available = quota - used;
 
         // Cap the visual scale at DEVICE_LIMIT (20 GB)
-        const displayMax = Math.min(quota > 0 ? quota : DEVICE_LIMIT, DEVICE_LIMIT);
-        const pct = displayMax > 0 ? Math.min((used / displayMax) * 100, 100) : 0;
+        const displayMax = Math.min(quota > 0 ? quota : DEVICE_LIMIT, DEVICE_LIMIT),
+            pct = displayMax > 0 ? Math.min((used / displayMax) * 100, 100) : 0;
 
         const fill = document.getElementById('storage-bar-fill');
         const txt = document.getElementById('storage-text');
@@ -232,8 +232,8 @@ async function updateStorageInfo() {
 async function checkStorageSpace(needed) {
     try {
         if (!navigator.storage?.estimate) return { ok: true, available: Infinity };
-        const est = await navigator.storage.estimate();
-        const available = (est.quota || 0) - (est.usage || 0);
+        const est = await navigator.storage.estimate(),
+            available = (est.quota || 0) - (est.usage || 0);
         // Keep 50 MB safety margin
         if (available - needed < 50 * 1024 * 1024) {
             return { ok: false, available };

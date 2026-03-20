@@ -3,18 +3,19 @@
 /* ============================================================
    CONSTANTS
    ============================================================ */
-const DB_NAME = 'SafeNofaEFS';
-const DB_VERSION = 2;
-const CONTAINER_LIMIT = 8 * 1024 * 1024 * 1024; // 8 GB per container
-const DEVICE_LIMIT = 20 * 1024 * 1024 * 1024; // 20 GB total device display limit
-const PBKDF2_ITER = 200_000; // legacy fallback
-const ARGON2_MEM = 19456;  // 19 MB memory cost (OWASP minimum)
-const ARGON2_ITER = 2;      // time cost (iterations)
-const ARGON2_PAR = 1;      // parallelism
-const VERIFY_TEXT = 'SafeNofaEFS-VERIFY-OK';
-const ICON_W = 84, ICON_H = 90;
-let GRID_X = 96;   // horizontal grid cell size
-let GRID_Y = 96;   // vertical   grid cell size
+const DB_NAME = 'SafeNofaEFS',
+    DB_VERSION = 2,
+    CONTAINER_LIMIT = 8 * 1024 * 1024 * 1024,   // 8 GB per container
+    DEVICE_LIMIT = 20 * 1024 * 1024 * 1024,  // 20 GB total device display limit
+    PBKDF2_ITER = 200_000,                   // legacy fallback
+    ARGON2_MEM = 19456,                     // 19 MB memory cost (OWASP minimum)
+    ARGON2_ITER = 2,                         // time cost (iterations)
+    ARGON2_PAR = 1,                         // parallelism
+    VERIFY_TEXT = 'SafeNofaEFS-VERIFY-OK',
+    ICON_W = 84,
+    ICON_H = 90;
+let GRID_X = 96,   // horizontal grid cell size
+    GRID_Y = 96;   // vertical   grid cell size
 
 /* ============================================================
    UTILITIES
