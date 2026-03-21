@@ -196,7 +196,7 @@ const VFS = (() => {
     function check(repair) {
         const steps = [];
 
-        function step(name, fn) {
+        function step(name, fn, informational = false) {
             const issues = [], fixed = [];
             const log = (sev, msg) => issues.push({ sev, msg });
             const fix = (msg) => fixed.push(msg);
@@ -204,7 +204,7 @@ const VFS = (() => {
             const hasCrit = issues.some(i => i.sev === 'critical');
             const status = issues.length === 0 ? 'pass' : hasCrit ? 'fail' : 'warn';
             const detail = issues.length === 0 ? 'OK' : `${issues.length} issue${issues.length !== 1 ? 's' : ''}${repair && fixed.length ? `, ${fixed.length} fixed` : ''}`;
-            steps.push({ name, status, detail, issues, fixed });
+            steps.push({ name, status, detail, issues, fixed, informational });
         }
 
         // 1. Root node & position map
@@ -232,6 +232,7 @@ const VFS = (() => {
 
         // 2. Node required fields
         step('Node field validation', (log, fix) => {
+            const _now = Date.now();
             for (const id of allIds) {
                 const n = _nodes[id];
                 if (!n.id || n.id !== id) {
@@ -245,6 +246,18 @@ const VFS = (() => {
                 if (!n.type || !['file', 'folder'].includes(n.type)) {
                     log('warn', `Node "${id}": invalid type "${n.type}"`);
                     if (repair) { n.type = 'file'; fix(`Set type to file for "${id}"`); }
+                }
+                if (id !== 'root') {
+                    const badCtime = !n.ctime || typeof n.ctime !== 'number' || n.ctime <= 0 || !isFinite(n.ctime);
+                    const badMtime = !n.mtime || typeof n.mtime !== 'number' || n.mtime <= 0 || !isFinite(n.mtime);
+                    if (badCtime) {
+                        log('warn', `"${n.name || id}": missing or invalid ctime`);
+                        if (repair) { n.ctime = _now; fix(`Restored ctime for "${n.name || id}"`); }
+                    }
+                    if (badMtime) {
+                        log('warn', `"${n.name || id}": missing or invalid mtime`);
+                        if (repair) { n.mtime = n.ctime || _now; fix(`Restored mtime for "${n.name || id}"`); }
+                    }
                 }
             }
         });
@@ -279,30 +292,39 @@ const VFS = (() => {
             }
         });
 
-        // 4. Timestamp anomaly detection (mass-corruption indicator)
-        step('Timestamp anomaly detection', (log) => {
-            if (allIds.length < 20) return; // not enough nodes to detect anomalies
+        // 4. Timestamp anomaly detection — when >50% of nodes share an identical ctime,
+        //    it indicates a bulk-import or corruption event. On repair, spread those ctimes
+        //    across a 1-second window so each node gets a unique, meaningful timestamp.
+        step('Timestamp anomaly detection', (log, fix) => {
+            if (allIds.length < 20) return;
             const ctimeMap = new Map();
             for (const id of allIds) {
                 if (id === 'root') continue;
                 const ct = _nodes[id].ctime;
-                if (ct) { ctimeMap.set(ct, (ctimeMap.get(ct) || 0) + 1); }
+                if (ct) ctimeMap.set(ct, (ctimeMap.get(ct) || 0) + 1);
             }
-            // Find largest cluster of identical ctimes
             let maxCluster = 0, maxTime = 0;
             for (const [t, count] of ctimeMap) {
                 if (count > maxCluster) { maxCluster = count; maxTime = t; }
             }
             const total = allIds.length - 1;
             if (maxCluster > total * 0.5 && maxCluster > 50) {
-                log('warn', `${maxCluster} of ${total} nodes share identical ctime (${new Date(maxTime).toISOString()}) — possible VFS corruption`);
+                log('warn', `${maxCluster} of ${total} nodes share identical ctime (${new Date(maxTime).toISOString()}) — possible bulk-import or VFS corruption`);
+                if (repair) {
+                    // Spread affected nodes across 1-second window (1 ms apart) so each gets unique ctime
+                    const base = Date.now();
+                    let offset = 0;
+                    for (const id of allIds) {
+                        if (id === 'root') continue;
+                        if (_nodes[id].ctime === maxTime) {
+                            _nodes[id].ctime = base + offset;
+                            if (!_nodes[id].mtime || _nodes[id].mtime === maxTime) _nodes[id].mtime = base + offset;
+                            offset++;
+                        }
+                    }
+                    fix(`Spread ${maxCluster} identical ctimes across a 1-second window`);
+                }
             }
-            // Check for abnormally high node count relative to position entries
-            const posEntries = Object.values(_pos).reduce((s, m) => s + Object.keys(m).length, 0);
-            const filesCount = allIds.filter(id => _nodes[id]?.type === 'file').length;
-            const foldersCount = allIds.filter(id => _nodes[id]?.type === 'folder').length - 1;
-            if (filesCount > 5000) log('warn', `Unusually high file count: ${filesCount} — verify container is not corrupted`);
-            if (foldersCount > 5000) log('warn', `Unusually high folder count: ${foldersCount} — verify container is not corrupted`);
         });
 
         // 5. File name validation
@@ -506,7 +528,7 @@ const VFS = (() => {
             }
         });
 
-        // 14. Empty folder chains (folder containing only empty folders, depth > 5)
+        // 14. Empty folder chains (folder containing only empty folders, depth > 5, read-only)
         step('Empty folder chain detection', (log) => {
             const childCount = {}, folderKids = new Map();
             for (const id of allIds) {
@@ -558,7 +580,7 @@ const VFS = (() => {
                 const d = emptyCache.get(id) || 0;
                 if (d > 5) log('warn', `"${_nodes[id].name}": empty folder chain ${d} levels deep`);
             }
-        });
+        }, true);
 
         // 15. Stale position entries
         step('Position table cleanup', (log, fix) => {
@@ -692,7 +714,6 @@ const VFS = (() => {
     // O(n) — single pass: mark ancestors, then delete everything else.
     // Returns count of removed nodes.
     function purgeDeadBranches(liveFileIds) {
-        // Walk ancestor chain for every live file — mark those nodes as \"keep\"
         const keep = new Set(['root']);
         for (const id of liveFileIds) {
             let cur = id;
@@ -719,9 +740,121 @@ const VFS = (() => {
         return removed;
     }
 
+    // Flatten tree: move all files deeper than MAX_DEPTH up to their nearest ≤MAX_DEPTH ancestor,
+    // then delete any (now-empty) folders still at depth > MAX_DEPTH.
+    // Preserves ALL file data. Returns count of removed folders.
+    function flattenDeepContent(MAX_DEPTH = 50) {
+        const allIds = Object.keys(_nodes);
+
+        // 1. O(n) memoized depth computation
+        const dc = new Map([[undefined, 0], [null, 0], ['root', 0]]);
+        function depth(nid) {
+            if (dc.has(nid)) return dc.get(nid);
+            const chain = [];
+            let cur = nid;
+            while (cur && !dc.has(cur)) { chain.push(cur); cur = _nodes[cur]?.parentId; }
+            let d = dc.get(cur) || 0;
+            for (let i = chain.length - 1; i >= 0; i--) dc.set(chain[i], ++d);
+            return dc.get(nid) || 0;
+        }
+        for (const id of allIds) depth(id);
+
+        // 2. Pre-build name sets per folder for collision detection
+        const namesByParent = new Map();
+        function getNames(pid) {
+            if (!namesByParent.has(pid)) {
+                const s = new Set(
+                    Object.keys(_nodes)
+                        .filter(id => _nodes[id]?.parentId === pid)
+                        .map(id => _nodes[id].name.toLowerCase())
+                );
+                namesByParent.set(pid, s);
+            }
+            return namesByParent.get(pid);
+        }
+        function uniqueName(pid, name) {
+            const names = getNames(pid);
+            if (!names.has(name.toLowerCase())) { names.add(name.toLowerCase()); return name; }
+            const dot = name.lastIndexOf('.');
+            const base = dot >= 0 ? name.slice(0, dot) : name;
+            const ext = dot >= 0 ? name.slice(dot) : '';
+            let i = 1;
+            while (names.has(`${base} (${i})${ext}`.toLowerCase())) i++;
+            const result = `${base} (${i})${ext}`;
+            names.add(result.toLowerCase());
+            return result;
+        }
+
+        // 3. Reparent all files whose parent folder is deeper than MAX_DEPTH
+        for (const id of allIds) {
+            const n = _nodes[id];
+            if (!n || n.type !== 'file') continue;
+            if (depth(n.parentId) <= MAX_DEPTH) continue;
+
+            // Walk up to the closest ancestor at depth ≤ MAX_DEPTH
+            let targetPid = n.parentId;
+            while (targetPid && depth(targetPid) > MAX_DEPTH) targetPid = _nodes[targetPid]?.parentId;
+            if (!targetPid) targetPid = 'root';
+
+            const oldPid = n.parentId;
+            n.name = uniqueName(targetPid, n.name);
+            n.parentId = targetPid;
+            n.mtime = Date.now();
+
+            // Update position maps
+            if (_pos[oldPid]) delete _pos[oldPid][id];
+            if (!_pos[targetPid]) _pos[targetPid] = {};
+            const posIdx = Object.keys(_pos[targetPid]).length;
+            const cols = Math.max(1, Math.floor((800 - 16) / GRID_X));
+            _pos[targetPid][id] = { x: 8 + (posIdx % cols) * GRID_X, y: 8 + Math.floor(posIdx / cols) * GRID_Y };
+        }
+
+        // 4. Delete all folders now at depth > MAX_DEPTH (no files remain in them)
+        let removed = 0;
+        for (const id of Object.keys(_nodes)) {
+            const n = _nodes[id];
+            if (!n || n.type !== 'folder' || id === 'root') continue;
+            if (depth(id) > MAX_DEPTH) {
+                delete _nodes[id];
+                delete _pos[id];
+                removed++;
+            }
+        }
+
+        // 5. Clean stale _pos entries
+        for (const pid of Object.keys(_pos)) {
+            if (!_nodes[pid] && pid !== 'root') { delete _pos[pid]; continue; }
+            for (const nid of Object.keys(_pos[pid] || {})) {
+                if (!_nodes[nid]) delete _pos[pid][nid];
+            }
+        }
+
+        return removed;
+    }
+
+    // Fix all corrupted/missing timestamps on every node. O(n), no side-effects beyond timestamps.
+    // Returns count of nodes whose metadata was patched.
+    function repairMetadata() {
+        const now = Date.now();
+        let fixed = 0;
+        for (const id of Object.keys(_nodes)) {
+            if (id === 'root') continue;
+            const n = _nodes[id];
+            let changed = false;
+            if (!n.ctime || typeof n.ctime !== 'number' || n.ctime <= 0 || !isFinite(n.ctime)) {
+                n.ctime = now; changed = true;
+            }
+            if (!n.mtime || typeof n.mtime !== 'number' || n.mtime <= 0 || !isFinite(n.mtime)) {
+                n.mtime = n.ctime; changed = true;
+            }
+            if (changed) fixed++;
+        }
+        return fixed;
+    }
+
     return {
         init, fromObj, toObj, children, node, add, remove, rename, move, wouldCycle,
         getPos, setPos, delPos, totalSize, breadcrumb, fullPath, autoPos, hasChildNamed,
-        remapPositions, check, fileIds, purgeDeadBranches
+        remapPositions, check, fileIds, purgeDeadBranches, flattenDeepContent, repairMetadata
     };
 })();

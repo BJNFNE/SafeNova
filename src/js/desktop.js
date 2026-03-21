@@ -105,21 +105,21 @@ const _ALOG_COLORS = {
     'export-container': '#3a6ea0'
 };
 const _ALOG_ICONS = {
-    upload:            Icons.upload,
-    delete:            Icons.trash,
-    rename:            Icons.rename,
-    move:              `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-    copy:              Icons.copy,
-    cut:               Icons.cut,
-    paste:             Icons.paste,
-    'create-file':     Icons.newfile,
-    'create-folder':   Icons.newfolder,
-    color:             `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="2.5" fill="currentColor"/></svg>`,
-    edit:              Icons.save,
-    download:          Icons.download,
-    'export-zip':      `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 2h5l3 3v9H4z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M9 2v3h3" stroke="currentColor" stroke-width="1.3"/><path d="M7 7h2v2H7zM7 10h2v2H7z" fill="currentColor" opacity=".85"/></svg>`,
-    sort:              Icons.sort,
-    'export-container':`<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="12" height="12" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M8 5v5M5.5 8l2.5 2 2.5-2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+    upload: Icons.upload,
+    delete: Icons.trash,
+    rename: Icons.rename,
+    move: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    copy: Icons.copy,
+    cut: Icons.cut,
+    paste: Icons.paste,
+    'create-file': Icons.newfile,
+    'create-folder': Icons.newfolder,
+    color: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="2.5" fill="currentColor"/></svg>`,
+    edit: Icons.save,
+    download: Icons.download,
+    'export-zip': `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 2h5l3 3v9H4z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M9 2v3h3" stroke="currentColor" stroke-width="1.3"/><path d="M7 7h2v2H7zM7 10h2v2H7z" fill="currentColor" opacity=".85"/></svg>`,
+    sort: Icons.sort,
+    'export-container': `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="12" height="12" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M8 5v5M5.5 8l2.5 2 2.5-2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>`
 };
 
 // ── Render: date-grouped list with badge layout ─────────────
@@ -796,7 +796,7 @@ async function _runDbChecks(repair, isAborted) {
                 let coerced = null;
                 const origType = typeof rec.iv;
                 if (typeof rec.iv === 'string') {
-                    try { coerced = new Uint8Array(atob(rec.iv).split('').map(c => c.charCodeAt(0))); } catch {}
+                    try { coerced = new Uint8Array(atob(rec.iv).split('').map(c => c.charCodeAt(0))); } catch { }
                 }
                 if (coerced && coerced.length >= 12) {
                     rec.iv = Array.from(coerced); // store as canonical Array format
@@ -956,10 +956,12 @@ function _openScannerModal() {
         summary.style.display = 'none';
         _aborted = false;
 
-        // Show 3 progress rows updated via callback
+        // Show 5 progress rows updated via onProgress callback
         const rowStorage = _addScanRow(log, 'Scanning storage records…');
-        const rowPurge   = _addScanRow(log, 'Purging dead nodes…');
-        const rowClean   = _addScanRow(log, 'Cleaning storage records…');
+        const rowPurge = _addScanRow(log, 'Purging dead nodes…');
+        const rowFlatten = _addScanRow(log, 'Flattening deep folder chains…');
+        const rowMeta = _addScanRow(log, 'Repairing metadata…');
+        const rowClean = _addScanRow(log, 'Cleaning storage records…');
         log.scrollTop = log.scrollHeight;
         await _delay(20);
 
@@ -967,17 +969,23 @@ function _openScannerModal() {
         const result = await _runDeepClean(() => _aborted, (msg) => {
             if (phase === 0) { _resolveScanRow(rowStorage, 'pass', 'OK'); phase = 1; }
             else if (phase === 1) { _resolveScanRow(rowPurge, 'pass', 'OK'); phase = 2; }
+            else if (phase === 2) { _resolveScanRow(rowFlatten, 'pass', 'OK'); phase = 3; }
+            else if (phase === 3) { _resolveScanRow(rowMeta, 'pass', 'OK'); phase = 4; }
         });
         if (_aborted) return;
 
-        // Resolve remaining rows
+        // Resolve any rows not yet resolved
         if (phase === 0) _resolveScanRow(rowStorage, 'pass', 'OK');
-        _resolveScanRow(rowPurge, result.removed > 0 ? 'pass' : 'warn',
-            result.removed > 0 ? `${result.removed} node${result.removed !== 1 ? 's' : ''} removed` : 'Nothing found');
+        if (phase <= 1) _resolveScanRow(rowPurge, 'pass', 'Clean');
+        _resolveScanRow(rowFlatten, 'pass',
+            result.flattened > 0 ? `${result.flattened} folder${result.flattened !== 1 ? 's' : ''} collapsed` : 'Clean');
+        _resolveScanRow(rowMeta, 'pass',
+            result.metadataFixed > 0 ? `${result.metadataFixed} node${result.metadataFixed !== 1 ? 's' : ''} patched` : 'Clean');
         _resolveScanRow(rowClean, 'pass', 'OK');
         log.scrollTop = log.scrollHeight;
 
-        if (result.removed > 0) {
+        const totalRemoved = (result.removed || 0) + (result.flattened || 0) + (result.metadataFixed || 0);
+        if (totalRemoved > 0) {
             await saveVFS();
             Desktop.render();
             await _delay(600);
@@ -986,12 +994,11 @@ function _openScannerModal() {
             summary.style.display = '';
             summary.className = 'scanner-summary critical';
             summary.innerHTML = `<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.5" stroke="currentColor" stroke-width="1.4"/><path d="M10 5.5v5.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="10" cy="14" r="0.9" fill="currentColor"/></svg>
-                <span class="scanner-summary-text"><strong>Could not be cleaned automatically.</strong> The container may require manual rebuilding from your backup.</span>`;
+                <span class="scanner-summary-text"><strong>Deep Clean found nothing to remove.</strong> All nodes are structurally valid. The remaining warnings are informational and require no action.</span>`;
             startBtn.style.display = '';
             startBtn.disabled = false;
             startBtn.textContent = 'Done';
         }
-        return;
     }
 
     async function _runScanAnimated(repair) {
@@ -1034,7 +1041,9 @@ function _openScannerModal() {
 
         // Combine all steps for summary
         const allSteps = [...vfsSteps, ...dbSteps];
-        const totalIssues = allSteps.reduce((s, st) => s + st.issues.length, 0),
+        const actionableIssues = allSteps.filter(s => !s.informational).reduce((s, st) => s + st.issues.length, 0),
+            infoIssues = allSteps.filter(s => s.informational).reduce((s, st) => s + st.issues.length, 0),
+            totalIssues = actionableIssues + infoIssues,
             totalFixed = allSteps.reduce((s, st) => s + st.fixed.length, 0),
             allPass = allSteps.every(s => s.status === 'pass');
 
@@ -1050,20 +1059,30 @@ function _openScannerModal() {
             await _delay(900);
             if (!_aborted) { await _runScanAnimated(false); }
             return;
-        } else if (repair && totalFixed === 0 && totalIssues > 0) {
-            // Repair ran but couldn't fix the remaining issues — offer Deep Clean
+        } else if (repair && totalFixed === 0 && actionableIssues > 0) {
+            // Repair ran but couldn't fix actionable issues — offer Deep Clean
             summary.className = 'scanner-summary critical';
             summary.innerHTML = `<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.5" stroke="currentColor" stroke-width="1.4"/><path d="M10 5.5v5.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="10" cy="14" r="0.9" fill="currentColor"/></svg>
-                <span class="scanner-summary-text"><strong>${totalIssues} issue${totalIssues !== 1 ? 's' : ''} could not be auto-repaired.</strong> Try <em>Deep Clean</em> to purge phantom nodes and rebuild the structure. A backup is strongly recommended first.</span>`;
+                <span class="scanner-summary-text"><strong>${actionableIssues} issue${actionableIssues !== 1 ? 's' : ''} could not be auto-repaired.</strong> Click <em>Deep Clean</em> for aggressive recovery (flattens deep trees, repairs all metadata). A backup will be offered first — no need to exit.</span>`;
             deepCleanBtn.style.display = '';
+        } else if (repair && totalFixed === 0 && actionableIssues === 0 && infoIssues > 0) {
+            // All remaining issues are informational warnings only — no action needed
+            summary.className = 'scanner-summary healthy';
+            summary.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 26" fill="none"><path d="M12 3L3.5 7.5v4.5c0 5.2 3.6 10 8.5 11.5 4.9-1.5 8.5-6.3 8.5-11.5V7.5L12 3z" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M9 13l2.5 2.5 4-4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="square" stroke-linejoin="round"/></svg>
+                <span class="scanner-summary-text"><strong>All structural issues are resolved.</strong> ${infoIssues} informational warning${infoIssues !== 1 ? 's' : ''} (e.g., folder depth) are noted but require no action.</span>`;
         } else if (allPass) {
             summary.className = 'scanner-summary healthy';
             summary.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 26" fill="none"><path d="M12 3L3.5 7.5v4.5c0 5.2 3.6 10 8.5 11.5 4.9-1.5 8.5-6.3 8.5-11.5V7.5L12 3z" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M9 13l2.5 2.5 4-4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="square" stroke-linejoin="round"/></svg>
                 <span class="scanner-summary-text"><strong>All checks passed.</strong> Your container's virtual disk image and workspace environment are in perfect condition.</span>`;
+        } else if (actionableIssues === 0 && infoIssues > 0) {
+            // Only informational warnings on first scan — no repair needed
+            summary.className = 'scanner-summary warnings';
+            summary.innerHTML = `<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.5" stroke="currentColor" stroke-width="1.4"/><path d="M10 5.5v5.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="10" cy="14" r="0.9" fill="currentColor"/></svg>
+                <span class="scanner-summary-text"><strong>${infoIssues} informational warning${infoIssues !== 1 ? 's' : ''} noted.</strong> Advisory only (e.g., folder nesting depth) — no data loss, no action required.</span>`;
         } else {
             summary.className = 'scanner-summary issues';
             summary.innerHTML = `<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.5" stroke="currentColor" stroke-width="1.4"/><path d="M10 5.5v5.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="10" cy="14" r="0.9" fill="currentColor"/></svg>
-                <span class="scanner-summary-text"><strong>${totalIssues} issue${totalIssues !== 1 ? 's' : ''} detected.</strong> Automatic repair can resolve these problems without data loss.</span>`;
+                <span class="scanner-summary-text"><strong>${actionableIssues} issue${actionableIssues !== 1 ? 's' : ''} detected.</strong> Click <em>Auto-Repair</em> — you'll be offered a backup option first, no need to exit the scanner.</span>`;
             _hasIssues = true;
             repairBtn.style.display = '';
         }
@@ -1095,15 +1114,27 @@ async function _runDeepClean(isAborted, onProgress) {
     // 3. Single-pass bulk purge via VFS.purgeDeadBranches (O(n))
     onProgress?.(`Purging dead nodes…`);
     const removed = VFS.purgeDeadBranches(liveFileIds);
-    if (_abort()) return { removed: 0 };
+    if (_abort()) return { removed: 0, flattened: 0 };
 
-    // 4. Remove orphaned DB records in a single IndexedDB transaction
+    // 4. Flatten folders nested deeper than 50 levels — reparents all files to
+    //    their closest depth-≤50 ancestor, then deletes the now-empty deep folders.
+    //    All file data is preserved; only folder hierarchy is truncated.
+    onProgress?.('Flattening deep folder chains…');
+    const flattened = VFS.flattenDeepContent(50);
+    if (_abort()) return { removed, flattened: 0 };
+
+    // 5. Repair all corrupted/missing metadata (timestamps → today's date)
+    onProgress?.('Repairing metadata…');
+    const metadataFixed = VFS.repairMetadata();
+    if (_abort()) return { removed, flattened, metadataFixed: 0 };
+
+    // 6. Remove orphaned DB records in a single IndexedDB transaction
     onProgress?.('Cleaning storage records…');
     const liveNow = new Set(VFS.fileIds());
     const orphanIds = allDbFiles.filter(f => !liveNow.has(f.id)).map(f => f.id);
     if (orphanIds.length) await DB.deleteFiles(orphanIds);
 
-    return { removed };
+    return { removed, flattened, metadataFixed };
 }
 
 /* ── Repair confirmation dialog (shown above scanner overlay) ─────── */
@@ -1420,11 +1451,11 @@ function _startIconDrag(e, node, el, srcCtx) {
     }
 
     const areaRect = srcArea.getBoundingClientRect(),
-        elRect    = el.getBoundingClientRect(),
+        elRect = el.getBoundingClientRect(),
         clickOffX = e.clientX - elRect.left,
         clickOffY = e.clientY - elRect.top,
-        startX    = e.clientX,
-        startY    = e.clientY;
+        startX = e.clientX,
+        startY = e.clientY;
 
     // Snapshot start positions of all selected icons
     const startPosMap = {};
@@ -1443,12 +1474,12 @@ function _startIconDrag(e, node, el, srcCtx) {
 
     let snapPreviewEls = [],      // previews inside the source area
         deskSnapPreviewEls = [],  // previews on desktop (when FW item escapes to desktop)
-        winSnapPreviewEls  = [],  // previews inside a hovered FW
-        ghostEls           = [],  // ghost clones on desktop when FW item escapes
-        moved    = false,
-        escaped  = false,         // FW item currently outside its window
+        winSnapPreviewEls = [],  // previews inside a hovered FW
+        ghostEls = [],  // ghost clones on desktop when FW item escapes
+        moved = false,
+        escaped = false,         // FW item currently outside its window
         hoverFolder = null,
-        hoverWin    = null,
+        hoverWin = null,
         lastX = e.clientX,
         lastY = e.clientY;
 
@@ -1469,8 +1500,8 @@ function _startIconDrag(e, node, el, srcCtx) {
                 snapped = _snapFreeCell(dropX + offX, dropY + offY, snapOcc),
                 cx = Math.round((snapped.x - 8) / GRID_X), cy = Math.round((snapped.y - 8) / GRID_Y);
             snapOcc.set(`${cx}_${cy}`, id);
-            previewArr[i].style.left    = snapped.x + 'px';
-            previewArr[i].style.top     = snapped.y + 'px';
+            previewArr[i].style.left = snapped.x + 'px';
+            previewArr[i].style.top = snapped.y + 'px';
             previewArr[i].style.display = '';
         });
     }
@@ -1478,7 +1509,7 @@ function _startIconDrag(e, node, el, srcCtx) {
     function _snapBackSrc() {
         srcCtx.selection.forEach(id => {
             const item = srcArea.querySelector(`.file-item[data-id="${id}"]`),
-                sp   = startPosMap[id];
+                sp = startPosMap[id];
             if (item && sp) {
                 item.style.transition = 'left 0.12s ease, top 0.12s ease';
                 item.style.left = sp.x + 'px'; item.style.top = sp.y + 'px';
@@ -1511,8 +1542,8 @@ function _startIconDrag(e, node, el, srcCtx) {
             return false;
         }
         // perform move
-        const movedIds  = [],
-            occupied  = new Map();
+        const movedIds = [],
+            occupied = new Map();
         VFS.children(destFid).forEach(n => {
             const p = VFS.getPos(destFid, n.id);
             if (p) occupied.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
@@ -1523,13 +1554,13 @@ function _startIconDrag(e, node, el, srcCtx) {
             const n = VFS.node(id); if (!n) continue;
             const result = VFS.move(id, destFid);
             if (result === 'duplicate') { toast(`"${n.name}" already exists in target folder`, 'error'); continue; }
-            if (result === 'cycle')     { toast(`Cannot move "${n.name}" into itself or a subfolder`, 'error'); continue; }
-            if (result !== 'ok')        { continue; }
+            if (result === 'cycle') { toast(`Cannot move "${n.name}" into itself or a subfolder`, 'error'); continue; }
+            if (result !== 'ok') { continue; }
             if (dropX !== null) {
-                const sp   = startPosMap[id],
+                const sp = startPosMap[id],
                     offX = sp && mainSp ? sp.x - mainSp.x : 0,
                     offY = sp && mainSp ? sp.y - mainSp.y : 0,
-                    sn   = _snapFreeCell(dropX + offX, dropY + offY, occupied);
+                    sn = _snapFreeCell(dropX + offX, dropY + offY, occupied);
                 VFS.setPos(destFid, id, sn.x, sn.y);
                 occupied.set(`${Math.round((sn.x - 8) / GRID_X)}_${Math.round((sn.y - 8) / GRID_Y)}`, id);
             }
@@ -1551,7 +1582,7 @@ function _startIconDrag(e, node, el, srcCtx) {
         const mainSp = startPosMap[node.id],
             curAreaRect = srcArea.getBoundingClientRect(),
             targetMainX = mv.clientX - curAreaRect.left + srcArea.scrollLeft - clickOffX,
-            targetMainY = mv.clientY - curAreaRect.top  + srcArea.scrollTop  - clickOffY,
+            targetMainY = mv.clientY - curAreaRect.top + srcArea.scrollTop - clickOffY,
             dx = targetMainX - mainSp.x,
             dy = targetMainY - mainSp.y;
 
@@ -1559,7 +1590,7 @@ function _startIconDrag(e, node, el, srcCtx) {
         if (!isDesktop) {
             const winRect = srcCtx.winEl.getBoundingClientRect();
             const outsideWindow = mv.clientX < winRect.left || mv.clientX > winRect.right ||
-                                  mv.clientY < winRect.top  || mv.clientY > winRect.bottom;
+                mv.clientY < winRect.top || mv.clientY > winRect.bottom;
 
             if (!outsideWindow && escaped) {
                 // Re-entered source window — cancel escape
@@ -1604,13 +1635,13 @@ function _startIconDrag(e, node, el, srcCtx) {
             const deskArea = document.getElementById('desktop-area'),
                 deskRect = deskArea.getBoundingClientRect(),
                 baseX = mv.clientX - deskRect.left + deskArea.scrollLeft - clickOffX,
-                baseY = mv.clientY - deskRect.top  + deskArea.scrollTop  - clickOffY;
+                baseY = mv.clientY - deskRect.top + deskArea.scrollTop - clickOffY;
             ghostEls.forEach(g => {
                 const sp = startPosMap[g.dataset.ghostFor],
                     offX = sp && mainSp ? sp.x - mainSp.x : 0,
                     offY = sp && mainSp ? sp.y - mainSp.y : 0;
                 g.style.left = (baseX + offX) + 'px';
-                g.style.top  = (baseY + offY) + 'px';
+                g.style.top = (baseY + offY) + 'px';
             });
         }
 
@@ -1638,7 +1669,7 @@ function _startIconDrag(e, node, el, srcCtx) {
         }
 
         // ---- hovered FW (excluding source window) -------------------------
-        const fwElt  = !hoverFolder ? target?.closest('.folder-window') : null,
+        const fwElt = !hoverFolder ? target?.closest('.folder-window') : null,
             curWin = fwElt ? (typeof WinManager !== 'undefined' ? WinManager._wins.find(w => w.el === fwElt) : null) : null,
             effectiveHoverWin = (curWin && curWin.el !== srcCtx.winEl) ? curWin : null;
         if (effectiveHoverWin !== hoverWin) {
@@ -1657,10 +1688,10 @@ function _startIconDrag(e, node, el, srcCtx) {
             snapPreviewEls.forEach(p => p.style.display = 'none');
             deskSnapPreviewEls.forEach(p => p.style.display = 'none');
             const winArea = hoverWin.el.querySelector('.fw-area'),
-                wRect   = winArea.getBoundingClientRect(),
-                dropX   = mv.clientX - wRect.left + winArea.scrollLeft - clickOffX,
-                dropY   = mv.clientY - wRect.top  + winArea.scrollTop  - clickOffY,
-                winOcc  = new Map();
+                wRect = winArea.getBoundingClientRect(),
+                dropX = mv.clientX - wRect.left + winArea.scrollLeft - clickOffX,
+                dropY = mv.clientY - wRect.top + winArea.scrollTop - clickOffY,
+                winOcc = new Map();
             VFS.children(hoverWin.folderId).forEach(n => {
                 const p = VFS.getPos(hoverWin.folderId, n.id);
                 if (p) winOcc.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
@@ -1671,10 +1702,10 @@ function _startIconDrag(e, node, el, srcCtx) {
             snapPreviewEls.forEach(p => p.style.display = 'none');
             winSnapPreviewEls.forEach(p => p.style.display = 'none');
             const deskArea = document.getElementById('desktop-area'),
-                dRect    = deskArea.getBoundingClientRect(),
-                dropX    = mv.clientX - dRect.left + deskArea.scrollLeft - clickOffX,
-                dropY    = mv.clientY - dRect.top  + deskArea.scrollTop  - clickOffY,
-                deskOcc  = new Map();
+                dRect = deskArea.getBoundingClientRect(),
+                dropX = mv.clientX - dRect.left + deskArea.scrollLeft - clickOffX,
+                dropY = mv.clientY - dRect.top + deskArea.scrollTop - clickOffY,
+                deskOcc = new Map();
             VFS.children(Desktop._desktopFolder).forEach(n => {
                 const p = VFS.getPos(Desktop._desktopFolder, n.id);
                 if (p) deskOcc.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
@@ -1694,9 +1725,9 @@ function _startIconDrag(e, node, el, srcCtx) {
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
         _isDragging = false;
-        snapPreviewEls.forEach(p => p.remove());     snapPreviewEls = [];
+        snapPreviewEls.forEach(p => p.remove()); snapPreviewEls = [];
         deskSnapPreviewEls.forEach(p => p.remove()); deskSnapPreviewEls = [];
-        winSnapPreviewEls.forEach(p => p.remove());  winSnapPreviewEls = [];
+        winSnapPreviewEls.forEach(p => p.remove()); winSnapPreviewEls = [];
         if (hoverFolder) document.querySelectorAll(`.file-item[data-id="${hoverFolder}"]`).forEach(i => i.classList.remove('drag-target'));
         ghostEls.forEach(g => g.remove()); ghostEls = [];
 
@@ -1732,10 +1763,10 @@ function _startIconDrag(e, node, el, srcCtx) {
                 let cur = w.folderId;
                 while (cur && cur !== 'root') { openFolderIds.add(cur); cur = (VFS.node(cur) || {}).parentId; }
             });
-            const dropT  = document.elementFromPoint(lastX, lastY),
-                tfw    = dropT?.closest('.folder-window'),
-                tw     = tfw ? WinManager._wins.find(w => w.el === tfw) : null,
-                tFid   = hoverFolder || (tw ? tw.folderId : null);
+            const dropT = document.elementFromPoint(lastX, lastY),
+                tfw = dropT?.closest('.folder-window'),
+                tw = tfw ? WinManager._wins.find(w => w.el === tfw) : null,
+                tFid = hoverFolder || (tw ? tw.folderId : null);
             const blocked = Array.from(srcCtx.selection).find(id => {
                 const n = VFS.node(id);
                 if (!n || n.type !== 'folder' || !openFolderIds.has(id)) return false;
@@ -1769,8 +1800,8 @@ function _startIconDrag(e, node, el, srcCtx) {
 
         // Determine actual drop zone
         const dropTarget = document.elementFromPoint(lastX, lastY),
-            tFwEl  = dropTarget?.closest('.folder-window'),
-            tWin   = tFwEl ? (typeof WinManager !== 'undefined' ? WinManager._wins.find(w => w.el === tFwEl) : null) : null,
+            tFwEl = dropTarget?.closest('.folder-window'),
+            tWin = tFwEl ? (typeof WinManager !== 'undefined' ? WinManager._wins.find(w => w.el === tFwEl) : null) : null,
             actualHoverWin = (tWin && tWin.el !== srcCtx.winEl) ? tWin : null;
 
         // ---- Case 2: dropped onto a folder icon ----------------------------
@@ -1806,10 +1837,10 @@ function _startIconDrag(e, node, el, srcCtx) {
         if (actualHoverWin || (!isDesktop && escaped && !hoverFolder)) {
             const targetWin = actualHoverWin;
             if (targetWin) {
-                const tArea   = targetWin.el.querySelector('.fw-area'),
-                    tRect   = tArea.getBoundingClientRect(),
+                const tArea = targetWin.el.querySelector('.fw-area'),
+                    tRect = tArea.getBoundingClientRect(),
                     dropPosX = lastX - tRect.left + tArea.scrollLeft - clickOffX,
-                    dropPosY = lastY - tRect.top  + tArea.scrollTop  - clickOffY,
+                    dropPosY = lastY - tRect.top + tArea.scrollTop - clickOffY,
                     movedIds = await _dropIntoFolder(targetWin.folderId, dropPosX, dropPosY);
                 if (movedIds === false) {
                     if (!isDesktop) srcCtx.selection.forEach(id => {
@@ -1842,10 +1873,10 @@ function _startIconDrag(e, node, el, srcCtx) {
         // ---- Case 4a: FW item dropped onto desktop ------------------------
         if (!isDesktop && escaped) {
             const deskArea = document.getElementById('desktop-area'),
-                dRect    = deskArea.getBoundingClientRect(),
+                dRect = deskArea.getBoundingClientRect(),
                 dropPosX = lastX - dRect.left + deskArea.scrollLeft - clickOffX,
-                dropPosY = lastY - dRect.top  + deskArea.scrollTop  - clickOffY,
-                deskFid  = Desktop._desktopFolder,
+                dropPosY = lastY - dRect.top + deskArea.scrollTop - clickOffY,
+                deskFid = Desktop._desktopFolder,
                 occupied = new Map();
             VFS.children(deskFid).forEach(n => {
                 const p = VFS.getPos(deskFid, n.id);
@@ -1857,11 +1888,11 @@ function _startIconDrag(e, node, el, srcCtx) {
                 const n = VFS.node(id); if (!n) continue;
                 const result = VFS.move(id, deskFid);
                 if (result === 'duplicate') { toast(`"${n.name}" already exists on desktop`, 'error'); continue; }
-                if (result === 'cycle')     { toast(`Cannot move "${n.name}" into itself`, 'error'); continue; }
-                const sp   = startPosMap[id],
+                if (result === 'cycle') { toast(`Cannot move "${n.name}" into itself`, 'error'); continue; }
+                const sp = startPosMap[id],
                     offX = sp && mainSp ? sp.x - mainSp.x : 0,
                     offY = sp && mainSp ? sp.y - mainSp.y : 0,
-                    sn   = _snapFreeCell(dropPosX + offX, dropPosY + offY, occupied);
+                    sn = _snapFreeCell(dropPosX + offX, dropPosY + offY, occupied);
                 VFS.setPos(deskFid, id, sn.x, sn.y);
                 occupied.set(`${Math.round((sn.x - 8) / GRID_X)}_${Math.round((sn.y - 8) / GRID_Y)}`, id);
                 movedIds.push(id);
@@ -1911,7 +1942,7 @@ function _startIconDrag(e, node, el, srcCtx) {
         srcCtx.selection.forEach(id => {
             const item = srcArea.querySelector(`.file-item[data-id="${id}"]`);
             if (!item) return;
-            const rawX    = parseInt(item.style.left), rawY = parseInt(item.style.top),
+            const rawX = parseInt(item.style.left), rawY = parseInt(item.style.top),
                 snapped = _snapFreeCell(rawX, rawY, occupied),
                 cx = Math.round((snapped.x - 8) / GRID_X), cy = Math.round((snapped.y - 8) / GRID_Y);
             occupied.set(`${cx}_${cy}`, id);
@@ -1935,23 +1966,31 @@ function _startIconDrag(e, node, el, srcCtx) {
    ============================================================ */
 function _buildSortSubmenu(sortTarget) {
     return [
-        { label: 'By Name', icon: Icons.sortName, submenu: [
-            { label: 'A → Z', icon: Icons.sortAsc, action: () => sortIcons('name', 'asc', sortTarget) },
-            { label: 'Z → A', icon: Icons.sortDesc, action: () => sortIcons('name', 'desc', sortTarget) },
-        ]},
-        { label: 'By Date Modified', icon: Icons.sortDate, submenu: [
-            { label: 'Newest first', icon: Icons.sortDesc, action: () => sortIcons('mtime', 'desc', sortTarget) },
-            { label: 'Oldest first', icon: Icons.sortAsc, action: () => sortIcons('mtime', 'asc', sortTarget) },
-        ]},
-        { label: 'By Date Created', icon: Icons.sortDate, submenu: [
-            { label: 'Newest first', icon: Icons.sortDesc, action: () => sortIcons('ctime', 'desc', sortTarget) },
-            { label: 'Oldest first', icon: Icons.sortAsc, action: () => sortIcons('ctime', 'asc', sortTarget) },
-        ]},
+        {
+            label: 'By Name', icon: Icons.sortName, submenu: [
+                { label: 'A → Z', icon: Icons.sortAsc, action: () => sortIcons('name', 'asc', sortTarget) },
+                { label: 'Z → A', icon: Icons.sortDesc, action: () => sortIcons('name', 'desc', sortTarget) },
+            ]
+        },
+        {
+            label: 'By Date Modified', icon: Icons.sortDate, submenu: [
+                { label: 'Newest first', icon: Icons.sortDesc, action: () => sortIcons('mtime', 'desc', sortTarget) },
+                { label: 'Oldest first', icon: Icons.sortAsc, action: () => sortIcons('mtime', 'asc', sortTarget) },
+            ]
+        },
+        {
+            label: 'By Date Created', icon: Icons.sortDate, submenu: [
+                { label: 'Newest first', icon: Icons.sortDesc, action: () => sortIcons('ctime', 'desc', sortTarget) },
+                { label: 'Oldest first', icon: Icons.sortAsc, action: () => sortIcons('ctime', 'asc', sortTarget) },
+            ]
+        },
         { sep: true },
-        { label: 'By Size', icon: Icons.sortSize, submenu: [
-            { label: 'Largest first', icon: Icons.sortDesc, action: () => sortIcons('size', 'desc', sortTarget) },
-            { label: 'Smallest first', icon: Icons.sortAsc, action: () => sortIcons('size', 'asc', sortTarget) },
-        ]},
+        {
+            label: 'By Size', icon: Icons.sortSize, submenu: [
+                { label: 'Largest first', icon: Icons.sortDesc, action: () => sortIcons('size', 'desc', sortTarget) },
+                { label: 'Smallest first', icon: Icons.sortAsc, action: () => sortIcons('size', 'asc', sortTarget) },
+            ]
+        },
         { sep: true },
         { label: 'By Type', icon: Icons.sortType, action: () => sortIcons('type', 'asc', sortTarget) },
     ];
@@ -2138,12 +2177,12 @@ const Desktop = {
         if (e.button !== 0) return;
         hideCtxMenu();
         _startIconDrag(e, node, el, {
-            area:      document.getElementById('desktop-area'),
-            folderId:  this._desktopFolder,
+            area: document.getElementById('desktop-area'),
+            folderId: this._desktopFolder,
             selection: this._sel,
-            winEl:     null,
-            updateUI:  () => { this._updateSelectionBar(); this.updateTaskbar(); },
-            clearAll:  () => {
+            winEl: null,
+            updateUI: () => { this._updateSelectionBar(); this.updateTaskbar(); },
+            clearAll: () => {
                 this._sel.clear();
                 document.querySelectorAll('#desktop-area > .file-item.selected').forEach(i => i.classList.remove('selected'));
             },
@@ -2263,7 +2302,7 @@ const Desktop = {
                     area.appendChild(_tdSnapPrev);
                 }
                 _tdSnapPrev.style.left = sn.x + 'px';
-                _tdSnapPrev.style.top  = sn.y + 'px';
+                _tdSnapPrev.style.top = sn.y + 'px';
                 _tdSnapPrev.style.display = '';
             }
         }, { passive: false });
@@ -2885,12 +2924,12 @@ class FolderWindow {
         if (e.button !== 0) return;
         hideCtxMenu();
         _startIconDrag(e, node, el, {
-            area:      this.el.querySelector('.fw-area'),
-            folderId:  this.folderId,
+            area: this.el.querySelector('.fw-area'),
+            folderId: this.folderId,
             selection: this.selection,
-            winEl:     this.el,
-            updateUI:  () => this._updateStatus(),
-            clearAll:  () => {
+            winEl: this.el,
+            updateUI: () => this._updateStatus(),
+            clearAll: () => {
                 this.selection.clear();
                 this.el.querySelectorAll('.fw-area > .file-item.selected').forEach(i => i.classList.remove('selected'));
             },

@@ -538,7 +538,10 @@ html.snv-doc-hidden #home-doc-tab {
     border-radius: var(--r);
     border: 1px solid transparent;
     align-self: flex-start;
-    transition: color var(--transition), border-color var(--transition), background var(--transition);
+    transition:
+        color var(--transition),
+        border-color var(--transition),
+        background var(--transition);
 }
 .github-link:hover {
     color: var(--text);
@@ -550,7 +553,9 @@ html.snv-doc-hidden #home-doc-tab {
     margin-left: 1px;
     transition: opacity var(--transition);
 }
-.github-link:hover .github-link-arrow { opacity: 0.6; }
+.github-link:hover .github-link-arrow {
+    opacity: 0.6;
+}
 .storage-row {
     display: flex;
     align-items: center;
@@ -1381,7 +1386,9 @@ textarea.code-editor::-webkit-scrollbar-thumb {
         left 0.05s linear,
         top 0.05s linear;
 }
-.no-snap-highlight .snap-preview { display: none !important; }
+.no-snap-highlight .snap-preview {
+    display: none !important;
+}
 
 /* File Viewer Modal */
 .modal-viewer {
@@ -2473,7 +2480,10 @@ input[type="password"]::-ms-clear {
     background: transparent;
     color: var(--text-dim);
     cursor: pointer;
-    transition: background .15s, border-color .15s, color .15s;
+    transition:
+        background 0.15s,
+        border-color 0.15s,
+        color 0.15s;
     white-space: nowrap;
 }
 .alog-filter.active {
@@ -2481,10 +2491,12 @@ input[type="password"]::-ms-clear {
     border-color: var(--accent);
     background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
-.alog-filter:hover { background: var(--bg3); }
+.alog-filter:hover {
+    background: var(--bg3);
+}
 .alog-filter-count {
     font-size: 10px;
-    opacity: .5;
+    opacity: 0.5;
     font-weight: 600;
 }
 .alog-clear-btn {
@@ -2500,9 +2512,14 @@ input[type="password"]::-ms-clear {
     cursor: pointer;
     white-space: nowrap;
     flex-shrink: 0;
-    transition: color .15s, border-color .15s;
+    transition:
+        color 0.15s,
+        border-color 0.15s;
 }
-.alog-clear-btn:hover { color: var(--red, #e74856); border-color: var(--red, #e74856); }
+.alog-clear-btn:hover {
+    color: var(--red, #e74856);
+    border-color: var(--red, #e74856);
+}
 .alog-list {
     height: 300px;
     overflow-y: auto;
@@ -2592,7 +2609,7 @@ input[type="password"]::-ms-clear {
     border-radius: 0;
 }
 .settings-sub-row.disabled {
-    opacity: .35;
+    opacity: 0.35;
     pointer-events: none;
 }
 
@@ -2626,7 +2643,7 @@ input[type="password"]::-ms-clear {
 .scanner-shield {
     flex-shrink: 0;
     color: var(--accent);
-    opacity: .7;
+    opacity: 0.7;
     margin-top: 2px;
 }
 .scanner-desc-title {
@@ -2686,24 +2703,42 @@ input[type="password"]::-ms-clear {
     border: 1.5px solid var(--border2);
     border-top-color: var(--accent);
     border-radius: 50%;
-    animation: spin .6s linear infinite;
+    animation: spin 0.6s linear infinite;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
-.scanner-step-icon svg { display: block; }
-.scanner-step.pass .scanner-step-icon { color: #34d399; }
-.scanner-step.fail .scanner-step-icon { color: #e74856; }
-.scanner-step.warn .scanner-step-icon { color: #f59e0b; }
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+.scanner-step-icon svg {
+    display: block;
+}
+.scanner-step.pass .scanner-step-icon {
+    color: #34d399;
+}
+.scanner-step.fail .scanner-step-icon {
+    color: #e74856;
+}
+.scanner-step.warn .scanner-step-icon {
+    color: #f59e0b;
+}
 .scanner-step .scanner-step-label {
     flex: 1;
 }
 .scanner-step .scanner-step-result {
     font-size: 11px;
     color: var(--text-dim);
-    opacity: .7;
+    opacity: 0.7;
     white-space: nowrap;
 }
-.scanner-step.fail .scanner-step-result { color: #e74856; opacity: 1; }
-.scanner-step.warn .scanner-step-result { color: #f59e0b; opacity: 1; }
+.scanner-step.fail .scanner-step-result {
+    color: #e74856;
+    opacity: 1;
+}
+.scanner-step.warn .scanner-step-result {
+    color: #f59e0b;
+    opacity: 1;
+}
 .scanner-summary {
     border-radius: var(--r);
     padding: 12px 14px;
@@ -2733,9 +2768,21 @@ input[type="password"]::-ms-clear {
     border: 1px solid color-mix(in srgb, #e74856 25%, transparent);
     color: #e74856;
 }
-.scanner-summary svg { flex-shrink: 0; }
-.scanner-summary-text { line-height: 1.5; }
-.scanner-summary-text strong { font-weight: 600; color: var(--text); }
+.scanner-summary.warnings {
+    background: color-mix(in srgb, #60a5fa 8%, var(--bg2));
+    border: 1px solid color-mix(in srgb, #60a5fa 25%, transparent);
+    color: #60a5fa;
+}
+.scanner-summary svg {
+    flex-shrink: 0;
+}
+.scanner-summary-text {
+    line-height: 1.5;
+}
+.scanner-summary-text strong {
+    font-weight: 600;
+    color: var(--text);
+}
 .btn-deep-clean {
     background: color-mix(in srgb, #e74856 15%, var(--bg2));
     border-color: color-mix(in srgb, #e74856 40%, transparent);
@@ -2751,13 +2798,13 @@ input[type="password"]::-ms-clear {
     position: fixed;
     inset: 0;
     z-index: 9000;
-    background: rgba(0,0,0,.55);
+    background: rgba(0, 0, 0, 0.55);
     display: flex;
     align-items: center;
     justify-content: center;
     opacity: 0;
     pointer-events: none;
-    transition: opacity .18s ease;
+    transition: opacity 0.18s ease;
 }
 .repair-confirm-overlay.show {
     opacity: 1;
@@ -2774,9 +2821,11 @@ input[type="password"]::-ms-clear {
     flex-direction: column;
     align-items: center;
     gap: 10px;
-    box-shadow: 0 12px 40px rgba(0,0,0,.5);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
 }
-.repair-confirm-icon { color: #f59e0b; }
+.repair-confirm-icon {
+    color: #f59e0b;
+}
 .repair-confirm-title {
     font-size: 14px;
     font-weight: 600;

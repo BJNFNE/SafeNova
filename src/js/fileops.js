@@ -45,11 +45,11 @@ async function uploadFiles(files) {
     for (let i = 0; i < fileArr.length; i += BATCH) {
         const batch = fileArr.slice(i, i + BATCH);
         const results = await Promise.allSettled(batch.map(async f => {
-            const name = sanitizeFilename(f.name);
-            const buf = await f.arrayBuffer();
-            const mime = f.type || getMime(name);
-            const { iv, blob } = await Crypto.encryptBin(App.key, buf);
-            const nodeId = uid();
+            const name = sanitizeFilename(f.name),
+                buf = await f.arrayBuffer(),
+                mime = f.type || getMime(name),
+                { iv, blob } = await Crypto.encryptBin(App.key, buf),
+                nodeId = uid();
             VFS.add({
                 id: nodeId, type: 'file', name, mime, size: f.size,
                 parentId: App.folder, ctime: Date.now(), mtime: Date.now()
@@ -101,10 +101,10 @@ async function _uploadFileEntry(fileEntry, targetFolderId) {
         toast(`"${name}" already exists — skipped`, 'warn');
         return false;
     }
-    const buf = await file.arrayBuffer();
-    const mime = file.type || getMime(name);
-    const { iv, blob } = await Crypto.encryptBin(App.key, buf);
-    const nodeId = uid(), now = Date.now();
+    const buf = await file.arrayBuffer(),
+        mime = file.type || getMime(name),
+        { iv, blob } = await Crypto.encryptBin(App.key, buf),
+        nodeId = uid(), now = Date.now();
     VFS.add({
         id: nodeId, type: 'file', name, mime, size: file.size,
         parentId: targetFolderId, ctime: now, mtime: now
@@ -759,15 +759,17 @@ function openEditor(node, buf) {
             { sep: true },
             { label: 'Cut', icon: Icons.cut, action: () => { ta.focus(); document.execCommand('cut'); if (ta.oninput) ta.oninput(); }, disabled: !hasSel },
             { label: 'Copy', icon: Icons.copy, action: () => { ta.focus(); document.execCommand('copy'); }, disabled: !hasSel },
-            { label: 'Paste', icon: Icons.paste, action: async () => {
-                ta.focus();
-                try {
-                    const txt = await navigator.clipboard.readText();
-                    const ss = ta.selectionStart, se = ta.selectionEnd;
-                    ta.setRangeText(txt, ss, se, 'end');
-                    if (ta.oninput) ta.oninput();
-                } catch (_) { /* clipboard read may be blocked by browser */ }
-            }},
+            {
+                label: 'Paste', icon: Icons.paste, action: async () => {
+                    ta.focus();
+                    try {
+                        const txt = await navigator.clipboard.readText();
+                        const ss = ta.selectionStart, se = ta.selectionEnd;
+                        ta.setRangeText(txt, ss, se, 'end');
+                        if (ta.oninput) ta.oninput();
+                    } catch (_) { /* clipboard read may be blocked by browser */ }
+                }
+            },
             { sep: true },
             { label: 'Select All', icon: _selAllIcon, action: () => { ta.focus(); ta.select(); } }
         ]);

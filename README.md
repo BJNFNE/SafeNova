@@ -27,7 +27,7 @@ Key properties:
 -   **Container import / export** — portable `.safenova` container files
 -   **Export password guard** — configurable setting (on by default) to require password confirmation before exporting; when disabled, active-session key is used directly
 -   **Sort & arrange** — sort icons by name, date, size, or type; drag to custom positions
--   **Container integrity scanner** — 27 automated checks (21 VFS structural + 6 database-level) with one-click auto-repair
+-   **Container integrity scanner** — 27 automated checks (21 VFS structural + 6 database-level) with one-click auto-repair, **Deep Clean** (flattens over-nested folder trees, repairs all metadata), and a backup prompt before any destructive operation
 -   **Settings** — three tabs: personalization, statistics, activity logs
 -   **Keyboard shortcuts** — `Delete`, `F2`, `Ctrl+A`, `Ctrl+C/X/V`, `Ctrl+S` (save in editor), `Escape`
 -   **Mobile-friendly** — touch drag, rubber-band selection, single/double-tap gestures
@@ -120,41 +120,49 @@ The built-in scanner performs a deep analysis of the virtual disk image, encrypt
 
 ### Phase 1 — VFS structural checks (21 steps, synchronous)
 
-| #   | Check                          | Repairs                                     |
-| --- | ------------------------------ | -------------------------------------------- |
-| 1   | Root node integrity            | Recreates missing root node                  |
-| 2   | Node field validation          | Fixes IDs, names, types                      |
-| 3   | Node ID format validation      | Reassigns malformed IDs                      |
-| 4   | Timestamp anomaly detection    | Warns about mass-corruption patterns         |
-| 5   | File name validation           | Sanitizes invalid characters, truncates long names |
-| 6   | Orphaned node detection        | Reattaches to root                           |
-| 7   | Parent type validation         | Reattaches nodes whose parent is a file      |
-| 8   | Parent-child cycle detection   | Breaks cycles by reattaching to root         |
-| 9   | Node reachability analysis     | O(n) memoized; reattaches unreachable nodes  |
-| 10  | Timestamp integrity            | Fixes invalid/future timestamps              |
-| 11  | File size validation           | Resets negative/invalid sizes                |
-| 12  | File metadata validation       | Strips unknown properties                    |
-| 13  | Duplicate name detection       | Auto-renames collisions                      |
-| 14  | Empty folder chain detection   | O(n) memoized                                |
-| 15  | Position table cleanup         | Removes stale entries                        |
-| 16  | Folder position maps           | Creates missing position maps                |
-| 17  | Position entry completeness    | Only check visited folders; auto-position on repair |
-| 18  | Position collision detection   | Relocates overlapping icons                  |
-| 19  | Grid alignment verification    | Snaps off-grid positions                     |
-| 20  | Folder depth analysis          | O(n) memoized                                |
-| 21  | Node count summary             | Informational                                |
+| #   | Check                        | Repairs                                                                        |
+| --- | ---------------------------- | ------------------------------------------------------------------------------ |
+| 1   | Root node integrity          | Recreates missing root; fixes type and parentId                                |
+| 2   | Node field validation        | Fixes IDs, names, types; restores missing/invalid ctime and mtime to today     |
+| 3   | Node ID format validation    | Reassigns malformed IDs; migrates position data                                |
+| 4   | Timestamp anomaly detection  | Detects mass-identical ctimes; spreads them across a 1-second window on repair |
+| 5   | File name validation         | Sanitizes invalid characters, truncates long names                             |
+| 6   | Orphaned node detection      | Reattaches to root                                                             |
+| 7   | Parent type validation       | Reattaches nodes whose parent is a file                                        |
+| 8   | Parent-child cycle detection | Breaks cycles by reattaching to root                                           |
+| 9   | Node reachability analysis   | O(n) memoized; reattaches unreachable nodes                                    |
+| 10  | Timestamp integrity          | Fixes invalid/future timestamps                                                |
+| 11  | File size validation         | Resets negative/invalid sizes                                                  |
+| 12  | File metadata validation     | Strips unknown properties                                                      |
+| 13  | Duplicate name detection     | Auto-renames collisions                                                        |
+| 14  | Empty folder chain detection | O(n) iterative post-order DFS; informational                                   |
+| 15  | Position table cleanup       | Removes stale entries                                                          |
+| 16  | Folder position maps         | Creates missing position maps                                                  |
+| 17  | Position entry completeness  | Only checks visited (opened) folders; auto-positions on repair                 |
+| 18  | Position collision detection | Relocates overlapping icons                                                    |
+| 19  | Grid alignment verification  | Snaps off-grid positions                                                       |
+| 20  | Folder depth analysis        | O(n) memoized; warns when nesting > 50 levels                                  |
+| 21  | Node count summary           | Informational — file/folder/position counts                                    |
 
 ### Phase 2 — Database-level checks (6 steps, async)
 
-| #   | Check                       | Repairs                                       |
-| --- | --------------------------- | --------------------------------------------- |
-| 1   | File data existence         | Removes VFS nodes missing from IndexedDB      |
-| 2   | Encryption IV integrity     | Accepts Array/Uint8Array/ArrayBuffer (canonical is plain Array); coerces base64 strings; purges only if truly invalid |
-| 3   | File blob integrity         | Resets declared size to 0 if blob is empty    |
-| 4   | Orphaned storage records    | Deletes DB records not referenced by VFS      |
-| 5   | Record container binding    | Fixes records bound to wrong container        |
-| 6   | Container size consistency  | Recalculates totalSize from VFS               |
+| #   | Check                      | Repairs                                                                                                             |
+| --- | -------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| 1   | File data existence        | Removes VFS nodes whose encrypted blob is missing from IndexedDB                                                    |
+| 2   | Encryption IV integrity    | Accepts Array/Uint8Array/ArrayBuffer (canonical: plain Array); coerces base64 strings; purges only if truly invalid |
+| 3   | File blob integrity        | Resets declared size to 0 if blob is empty                                                                          |
+| 4   | Orphaned storage records   | Deletes DB records not referenced by any VFS node                                                                   |
+| 5   | Record container binding   | Fixes records bound to wrong container ID                                                                           |
+| 6   | Container size consistency | Recalculates totalSize from live VFS nodes                                                                          |
 
-Before auto-repair runs, a confirmation dialog recommends exporting the container as a `.safenova` backup. Closing the scanner modal cancels any running scan. After a successful repair, a verification scan runs automatically to confirm all issues are resolved.
+Before auto-repair runs, a **confirmation dialog** recommends exporting the container as a `.safenova` backup — you can do this without leaving the scanner. After a successful repair, a verification scan runs automatically to confirm all issues are resolved.
 
-If auto-repair cannot fix the remaining issues, a **Deep Clean** option becomes available. It performs a full structural rebuild in a single O(n) pass — keeping only nodes that have real encrypted data behind them and discarding everything else. DB records are removed in one batch transaction. After deep clean, a verification scan runs automatically.
+If auto-repair cannot fix the remaining issues, a **Deep Clean** option becomes available. It performs an aggressive structural rebuild in five O(n) passes:
+
+1. Scan DB storage records
+2. Purge dead nodes — remove every VFS node with no real encrypted data behind it
+3. Flatten deep folder chains — files nested more than 50 levels deep are reparented to their closest ≤50-level ancestor; all file data is preserved
+4. Repair metadata — each node with a missing or invalid `ctime`/`mtime` gets today's date
+5. Clean storage records — remove orphaned DB entries in a single batch transaction
+
+After Deep Clean, a verification scan runs automatically. A backup is offered before Deep Clean runs, same as for auto-repair.
