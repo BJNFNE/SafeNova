@@ -508,31 +508,33 @@ const VFS = (() => {
 
         // 14. Empty folder chains (folder containing only empty folders, depth > 5)
         step('Empty folder chain detection', (log) => {
-            const childCount = {};
+            const childCount = {}, folderKids = new Map();
             for (const id of allIds) {
                 if (id === 'root') continue;
                 const pid = _nodes[id].parentId;
                 if (!childCount[pid]) childCount[pid] = { files: 0, folders: 0 };
                 if (_nodes[id].type === 'file') childCount[pid].files++;
-                else childCount[pid].folders++;
-            }
-            function emptyDepth(fid, visited) {
-                if (visited.has(fid)) return 0;
-                visited.add(fid);
-                const cc = childCount[fid];
-                if (!cc || (cc.files === 0 && cc.folders === 0)) return 1;
-                if (cc.files > 0) return 0;
-                let maxD = 0;
-                for (const id of allIds) {
-                    if (_nodes[id].parentId === fid && _nodes[id].type === 'folder') {
-                        maxD = Math.max(maxD, emptyDepth(id, visited));
-                    }
+                else {
+                    childCount[pid].folders++;
+                    if (!folderKids.has(pid)) folderKids.set(pid, []);
+                    folderKids.get(pid).push(id);
                 }
-                return maxD > 0 ? maxD + 1 : 0;
+            }
+            const emptyCache = new Map();
+            function emptyDepth(fid) {
+                if (emptyCache.has(fid)) return emptyCache.get(fid);
+                const cc = childCount[fid];
+                if (!cc || (cc.files === 0 && cc.folders === 0)) { emptyCache.set(fid, 1); return 1; }
+                if (cc.files > 0) { emptyCache.set(fid, 0); return 0; }
+                let maxD = 0;
+                for (const sub of (folderKids.get(fid) || [])) maxD = Math.max(maxD, emptyDepth(sub));
+                const result = maxD > 0 ? maxD + 1 : 0;
+                emptyCache.set(fid, result);
+                return result;
             }
             for (const id of allIds) {
                 if (_nodes[id]?.type !== 'folder' || id === 'root') continue;
-                const d = emptyDepth(id, new Set());
+                const d = emptyDepth(id);
                 if (d > 5) log('warn', `"${_nodes[id].name}": empty folder chain ${d} levels deep`);
             }
         });
@@ -619,20 +621,22 @@ const VFS = (() => {
             }
         });
 
-        // 20. Folder depth check
+        // 20. Folder depth check (O(n) memoized)
         step('Folder depth analysis', (log) => {
+            const dc = new Map([[undefined, 0], [null, 0], ['root', 0]]);
+            function depth(nid) {
+                if (dc.has(nid)) return dc.get(nid);
+                const chain = [];
+                let cur = nid;
+                while (cur && !dc.has(cur)) { chain.push(cur); cur = _nodes[cur]?.parentId; }
+                let d = dc.get(cur) || 0;
+                for (let i = chain.length - 1; i >= 0; i--) dc.set(chain[i], ++d);
+                return dc.get(nid) || 0;
+            }
             for (const id of allIds) {
                 if (_nodes[id]?.type !== 'folder' || id === 'root') continue;
-                let depth = 0;
-                const visited = new Set();
-                let cur = id;
-                while (cur && cur !== 'root') {
-                    if (visited.has(cur)) break;
-                    visited.add(cur);
-                    depth++;
-                    cur = _nodes[cur]?.parentId;
-                }
-                if (depth > 50) log('warn', `"${_nodes[id]?.name || id}" is nested ${depth} levels deep`);
+                const d = depth(id);
+                if (d > 50) log('warn', `"${_nodes[id]?.name || id}" is nested ${d} levels deep`);
             }
         });
 

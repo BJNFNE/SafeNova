@@ -27,6 +27,8 @@ Key properties:
 -   **Container import / export** — portable `.safenova` container files
 -   **Export password guard** — configurable setting (on by default) to require password confirmation before exporting; when disabled, active-session key is used directly
 -   **Sort & arrange** — sort icons by name, date, size, or type; drag to custom positions
+-   **Container integrity scanner** — 27 automated checks (21 VFS structural + 6 database-level) with one-click auto-repair
+-   **Settings** — three tabs: personalization, statistics, activity logs
 -   **Keyboard shortcuts** — `Delete`, `F2`, `Ctrl+A`, `Ctrl+C/X/V`, `Ctrl+S` (save in editor), `Escape`
 -   **Mobile-friendly** — touch drag, rubber-band selection, single/double-tap gestures
 
@@ -86,6 +88,7 @@ SafeNova/
 │   └── app.css         # All application styles
 │
 └── js/
+    ├── argon2.umd.min.js # Argon2id WASM/JS implementation
     ├── constants.js    # Shared constants, utilities, icon SVGs
     ├── state.js        # App state singleton (key, container, session)
     ├── crypto.js       # AES-256-GCM + Argon2id encryption layer
@@ -108,3 +111,48 @@ SafeNova/
 5. **Lock** the container — the key is wiped from memory
 
 All container data is scoped to the current browser and device. Use **Export Container** to back up or transfer to another device.
+
+---
+
+## 🛡️ Container Integrity Scanner
+
+The built-in scanner performs a deep analysis of the virtual disk image, encrypted file table, folder hierarchy, desktop layout, and workspace environment. It runs **27 checks** in two phases:
+
+### Phase 1 — VFS structural checks (21 steps, synchronous)
+
+| #   | Check                          | Repairs                                     |
+| --- | ------------------------------ | -------------------------------------------- |
+| 1   | Root node integrity            | Recreates missing root node                  |
+| 2   | Node field validation          | Fixes IDs, names, types                      |
+| 3   | Node ID format validation      | Reassigns malformed IDs                      |
+| 4   | Timestamp anomaly detection    | Warns about mass-corruption patterns         |
+| 5   | File name validation           | Sanitizes invalid characters, truncates long names |
+| 6   | Orphaned node detection        | Reattaches to root                           |
+| 7   | Parent type validation         | Reattaches nodes whose parent is a file      |
+| 8   | Parent-child cycle detection   | Breaks cycles by reattaching to root         |
+| 9   | Node reachability analysis     | O(n) memoized; reattaches unreachable nodes  |
+| 10  | Timestamp integrity            | Fixes invalid/future timestamps              |
+| 11  | File size validation           | Resets negative/invalid sizes                |
+| 12  | File metadata validation       | Strips unknown properties                    |
+| 13  | Duplicate name detection       | Auto-renames collisions                      |
+| 14  | Empty folder chain detection   | O(n) memoized                                |
+| 15  | Position table cleanup         | Removes stale entries                        |
+| 16  | Folder position maps           | Creates missing position maps                |
+| 17  | Position entry completeness    | Auto-positions unplaced nodes                |
+| 18  | Position collision detection   | Relocates overlapping icons                  |
+| 19  | Grid alignment verification    | Snaps off-grid positions                     |
+| 20  | Folder depth analysis          | O(n) memoized                                |
+| 21  | Node count summary             | Informational                                |
+
+### Phase 2 — Database-level checks (6 steps, async)
+
+| #   | Check                       | Repairs                                       |
+| --- | --------------------------- | --------------------------------------------- |
+| 1   | File data existence         | Removes VFS nodes missing from IndexedDB      |
+| 2   | Encryption IV integrity     | Coerces Array/base64 IVs → Uint8Array         |
+| 3   | File blob integrity         | Resets declared size to 0 if blob is empty    |
+| 4   | Orphaned storage records    | Deletes DB records not referenced by VFS      |
+| 5   | Record container binding    | Fixes records bound to wrong container        |
+| 6   | Container size consistency  | Recalculates totalSize from VFS               |
+
+Before auto-repair runs, a confirmation dialog recommends exporting the container as a `.safenova` backup. Closing the scanner modal cancels any running scan.

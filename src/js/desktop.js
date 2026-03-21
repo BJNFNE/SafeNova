@@ -723,7 +723,7 @@ function _resolveScanRow(row, status, detail) {
 }
 
 /* --- Async DB-level checks (file data, IVs, orphan records, size consistency) --- */
-async function _runDbChecks(repair) {
+async function _runDbChecks(repair, isAborted) {
     const steps = [];
     function mkStep(name, iss, fxd) {
         const hasCrit = iss.some(i => i.sev === 'critical');
@@ -738,11 +738,13 @@ async function _runDbChecks(repair) {
 
     // Snapshot VFS file IDs — refresh after each destructive step
     let vfsFileIds = new Set(VFS.fileIds());
+    const _abort = () => isAborted?.();
 
     // 1. File data existence — VFS file nodes whose encrypted data is missing from IndexedDB
     {
         const issues = [], fixed = [];
         for (const id of vfsFileIds) {
+            if (_abort()) break;
             const node = VFS.node(id);
             if (!dbFileMap.has(id)) {
                 issues.push({ sev: 'critical', msg: `"${node?.name || id}": encrypted data not found in storage` });
@@ -758,8 +760,10 @@ async function _runDbChecks(repair) {
 
     // 2. Encryption IV integrity — attempt to coerce IV before declaring unrecoverable
     {
+        if (_abort()) return steps;
         const issues = [], fixed = [];
         for (const [id, rec] of dbFileMap) {
+            if (_abort()) break;
             if (!vfsFileIds.has(id)) continue;
             const node = VFS.node(id);
 
@@ -805,6 +809,7 @@ async function _runDbChecks(repair) {
 
     // 3. File blob integrity — sized files must have non-empty blob
     {
+        if (_abort()) return steps;
         const issues = [], fixed = [];
         for (const [id, rec] of dbFileMap) {
             if (!vfsFileIds.has(id)) continue;
@@ -825,9 +830,11 @@ async function _runDbChecks(repair) {
 
     // 4. Orphaned DB records — DB files not referenced by any VFS node
     {
+        if (_abort()) return steps;
         const issues = [], fixed = [];
         const liveIds = new Set(VFS.fileIds());
         for (const [id] of dbFileMap) {
+            if (_abort()) break;
             if (!liveIds.has(id)) {
                 issues.push({ sev: 'warn', msg: `Orphaned DB record "${id}"` });
                 if (repair) {
@@ -839,47 +846,21 @@ async function _runDbChecks(repair) {
         mkStep('Orphaned storage records', issues, fixed);
     }
 
-    // 5. Dead folder cleanup — prune folders whose entire subtree has zero live files
+    // 5. Record container binding — verify DB records belong to current container
     {
+        if (_abort()) return steps;
         const issues = [], fixed = [];
-        const liveIds = new Set(VFS.fileIds());
-        // Only clean dead folders if the user intentionally created them empty — skip if ALL folders are dead
-        // (that would mean the entire container is corrupted and we shouldn't wipe everything)
-        const totalFolders = Object.keys(VFS.toObj().nodes).filter(id => id !== 'root' && VFS.node(id)?.type === 'folder').length;
-
-        function hasLiveDescendant(fid, visited) {
-            if (visited.has(fid)) return false;
-            visited.add(fid);
-            for (const child of VFS.children(fid)) {
-                if (child.type === 'file' && liveIds.has(child.id)) return true;
-                if (child.type === 'folder' && hasLiveDescendant(child.id, visited)) return true;
-            }
-            return false;
-        }
-        function gatherBottomUp(fid) {
-            const out = [];
-            for (const child of VFS.children(fid)) {
-                if (child.type === 'folder') { out.push(...gatherBottomUp(child.id)); out.push(child.id); }
-            }
-            return out;
-        }
-        const allFolders = gatherBottomUp('root');
-        let deadCount = 0;
-        for (const fid of allFolders) {
-            if (!VFS.node(fid)) continue;
-            if (!hasLiveDescendant(fid, new Set())) deadCount++;
-        }
-        // Only prune if less than 90% of folders are dead (avoid nuking everything)
-        const shouldPrune = totalFolders > 0 && (deadCount / totalFolders < 0.9);
-        for (const fid of allFolders) {
-            if (!VFS.node(fid)) continue;
-            if (!hasLiveDescendant(fid, new Set())) {
-                const node = VFS.node(fid);
-                issues.push({ sev: 'warn', msg: `"${node?.name || fid}": empty subtree` });
-                if (repair && shouldPrune) { VFS.remove(fid); fixed.push(`Removed dead folder "${node?.name || fid}"`); }
+        for (const [id, rec] of dbFileMap) {
+            if (rec.cid && rec.cid !== App.container.id) {
+                issues.push({ sev: 'warn', msg: `Record "${id}": bound to different container` });
+                if (repair) {
+                    rec.cid = App.container.id;
+                    await DB.saveFile(rec);
+                    fixed.push(`Rebound record "${id}" to current container`);
+                }
             }
         }
-        mkStep('Dead folder cleanup', issues, fixed);
+        mkStep('Record container binding', issues, fixed);
     }
 
     // 6. Container size consistency
@@ -914,7 +895,7 @@ function _openScannerModal() {
     startBtn.style.display = '';
     startBtn.disabled = false;
     startBtn.textContent = 'Start Scan';
-    let _hasIssues = false;
+    let _hasIssues = false, _aborted = false;
 
     startBtn.onclick = () => {
         if (_hasIssues || startBtn.textContent === 'Done') {
@@ -939,18 +920,20 @@ function _openScannerModal() {
         });
     };
 
-    closeBtn.onclick = () => Overlay.hide();
+    closeBtn.onclick = () => { _aborted = true; Overlay.hide(); };
 
     async function _runScanAnimated(repair) {
         log.innerHTML = '';
         summary.style.display = 'none';
         _hasIssues = false;
+        _aborted = false;
 
-        // Phase 1: VFS structural checks — run synchronously but yield per step for UI
+        // Phase 1: VFS structural checks — run synchronously, display per step
         const vfsSteps = VFS.check(repair);
         for (const s of vfsSteps) {
+            if (_aborted) return;
             const row = _addScanRow(log, s.name);
-            await _delay(40 + Math.random() * 30);
+            await _delay(15);
             _resolveScanRow(row, s.status, s.detail);
             log.scrollTop = log.scrollHeight;
         }
@@ -961,15 +944,18 @@ function _openScannerModal() {
             'Encryption IV integrity',
             'File blob integrity',
             'Orphaned storage records',
-            'Dead folder cleanup',
+            'Record container binding',
             'Container size consistency',
         ];
         const dbRows = dbCheckNames.map(name => _addScanRow(log, name));
         log.scrollTop = log.scrollHeight;
 
-        const dbSteps = await _runDbChecks(repair);
+        if (_aborted) return;
+        const dbSteps = await _runDbChecks(repair, () => _aborted);
+        if (_aborted) return;
         for (let i = 0; i < dbSteps.length; i++) {
-            await _delay(60 + Math.random() * 40);
+            if (_aborted) return;
+            await _delay(30);
             _resolveScanRow(dbRows[i], dbSteps[i].status, dbSteps[i].detail);
             log.scrollTop = log.scrollHeight;
         }
