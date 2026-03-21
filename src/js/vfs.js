@@ -41,6 +41,13 @@ const VFS = (() => {
                 cur = _nodes[cur].parentId;
             }
         });
+        // Integrity repair pass 3: prune _pos entries whose parent or child node no longer exists
+        for (const pid of Object.keys(_pos)) {
+            if (pid !== 'root' && !_nodes[pid]) { delete _pos[pid]; continue; }
+            for (const nid of Object.keys(_pos[pid] || {})) {
+                if (!_nodes[nid]) delete _pos[pid][nid];
+            }
+        }
     }
 
     function toObj() { return { nodes: _nodes, pos: _pos }; }
@@ -52,6 +59,7 @@ const VFS = (() => {
     function delPos(pid, nid) { if (_pos[pid]) delete _pos[pid][nid]; }
 
     function add(nd) {
+        if (!nd?.id || nd.id === 'root' || !['file', 'folder'].includes(nd.type)) return;
         _nodes[nd.id] = nd;
         if (!_pos[nd.id] && nd.type === 'folder') _pos[nd.id] = {};
     }
@@ -69,14 +77,21 @@ const VFS = (() => {
     }
 
     function rename(id, newName) {
-        if (_nodes[id]) { _nodes[id].name = newName; _nodes[id].mtime = Date.now(); }
+        if (id !== 'root' && _nodes[id]) { _nodes[id].name = newName; _nodes[id].mtime = Date.now(); }
     }
 
     function move(id, newParentId) {
         const n = _nodes[id]; if (!n || !_nodes[newParentId]) return 'not_found';
-        // prevent move into self or descendant
+        if (id === 'root' || _nodes[newParentId].type !== 'folder') return 'not_found';
+        // prevent move into self or descendant — visited Set guards against corrupt-data infinite loops
         let c = newParentId;
-        while (c) { if (c === id) return 'cycle'; c = (_nodes[c] || {}).parentId; }
+        const _mv = new Set();
+        while (c) {
+            if (c === id) return 'cycle';
+            if (_mv.has(c)) break;
+            _mv.add(c);
+            c = (_nodes[c] || {}).parentId;
+        }
         // prevent duplicate name in destination
         if (children(newParentId).some(s => s.id !== id && s.name.toLowerCase() === n.name.toLowerCase())) return 'duplicate';
         delPos(n.parentId, id);
@@ -88,7 +103,7 @@ const VFS = (() => {
     function totalSize() {
         return Object.values(_nodes)
             .filter(n => n.type === 'file')
-            .reduce((s, n) => s + (n.size || 0), 0);
+            .reduce((s, n) => s + (Number.isFinite(n.size) ? n.size : 0), 0);
     }
 
     function breadcrumb(folderId) {
@@ -145,7 +160,13 @@ const VFS = (() => {
 
     function wouldCycle(id, newParentId) {
         let c = newParentId;
-        while (c) { if (c === id) return true; c = (_nodes[c] || {}).parentId; }
+        const _wc = new Set();
+        while (c) {
+            if (c === id) return true;
+            if (_wc.has(c)) break;
+            _wc.add(c);
+            c = (_nodes[c] || {}).parentId;
+        }
         return false;
     }
 

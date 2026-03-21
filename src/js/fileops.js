@@ -265,7 +265,12 @@ async function deleteSelected() {
                 delete App.thumbCache[id];
             } else {
                 const toDelete = [];
-                const walk = fid => { VFS.children(fid).forEach(c => { if (c.type === 'file') toDelete.push(c.id); else walk(c.id); }); };
+                const _walkSeen = new Set();
+                const walk = fid => {
+                    if (_walkSeen.has(fid)) return;
+                    _walkSeen.add(fid);
+                    VFS.children(fid).forEach(c => { if (c.type === 'file') toDelete.push(c.id); else walk(c.id); });
+                };
                 walk(id);
                 for (const fid of toDelete) { try { await DB.deleteFile(fid); } catch (e) { } delete App.thumbCache[fid]; }
             }
@@ -302,8 +307,8 @@ function newTextFile() {
 }
 
 async function createTextFile() {
-    const name = document.getElementById('nf-name').value.trim();
-    if (!name) { toast('Enter a file name', 'error'); return; }
+    const name = sanitizeFilename(document.getElementById('nf-name').value.trim());
+    if (!name || name === 'unnamed') { toast('Enter a valid file name', 'error'); return; }
     // Capture context BEFORE Overlay.hide() clears it
     const targetFolder = App.folder,
         winCtx = App._winCtx;
@@ -363,8 +368,8 @@ function newFolder() {
 }
 
 async function createFolder() {
-    const name = document.getElementById('nd-name').value.trim();
-    if (!name) { toast('Enter a folder name', 'error'); return; }
+    const name = sanitizeFilename(document.getElementById('nd-name').value.trim());
+    if (!name || name === 'unnamed') { toast('Enter a valid folder name', 'error'); return; }
     // Capture context BEFORE Overlay.hide() clears it
     const targetFolder = App.folder,
         winCtx = App._winCtx;
@@ -425,8 +430,8 @@ function renameNode(node) {
         if (dot > 0) i.setSelectionRange(0, dot); else i.select();
     }, 100);
     document.getElementById('rename-ok').onclick = async () => {
-        const newName = document.getElementById('rename-input').value.trim();
-        if (!newName) { toast('Enter a name', 'error'); return; }
+        const newName = sanitizeFilename(document.getElementById('rename-input').value.trim());
+        if (!newName || newName === 'unnamed') { toast('Enter a valid name', 'error'); return; }
         // Duplicate check (ignore if same name, case-insensitive)
         const pid = VFS.node(node.id)?.parentId;
         if (pid && newName.toLowerCase() !== node.name.toLowerCase() && VFS.hasChildNamed(pid, newName)) {
@@ -522,7 +527,8 @@ async function pasteItems() {
     if (typeof WinManager !== 'undefined') WinManager.renderAll();
 }
 
-async function deepCopy(nodeId, newParent, newName) {
+async function deepCopy(nodeId, newParent, newName, _depth = 0) {
+    if (_depth > 64 || nodeId === 'root') return;
     const n = VFS.node(nodeId); if (!n) return;
     const newId = uid();
     const name = newName || n.name;
@@ -532,7 +538,7 @@ async function deepCopy(nodeId, newParent, newName) {
         if (rec) await DB.saveFile({ ...rec, id: newId, cid: App.container.id });
     } else {
         VFS.add({ ...n, id: newId, name, parentId: newParent, ctime: Date.now(), mtime: Date.now() });
-        for (const child of VFS.children(nodeId)) await deepCopy(child.id, newId);
+        for (const child of VFS.children(nodeId)) await deepCopy(child.id, newId, undefined, _depth + 1);
     }
 }
 
@@ -645,10 +651,12 @@ async function openFileAsText(node) {
 /* ============================================================
    FOLDER SIZE  (recursive sum of all file descendants)
    ============================================================ */
-function _folderSize(folderId) {
+function _folderSize(folderId, _visited = new Set()) {
+    if (_visited.has(folderId)) return 0;
+    _visited.add(folderId);
     let size = 0;
     VFS.children(folderId).forEach(n => {
-        size += n.type === 'file' ? (n.size || 0) : _folderSize(n.id);
+        size += n.type === 'file' ? (n.size || 0) : _folderSize(n.id, _visited);
     });
     return size;
 }
@@ -1095,11 +1103,13 @@ async function exportAsZip(nodeIds, zipName) {
     }
     showLoading('Preparing ZIP…');
     try {
-        const entries = [];
-        async function collectFiles(nodeId, prefix) {
+        const entries = [], _zipSeen = new Set();
+        async function collectFiles(nodeId, prefix, _depth = 0) {
+            if (_zipSeen.has(nodeId) || _depth > 64) return;
+            _zipSeen.add(nodeId);
             const n = VFS.node(nodeId); if (!n) return;
             if (n.type === 'folder') {
-                for (const c of VFS.children(nodeId)) await collectFiles(c.id, prefix + n.name + '/');
+                for (const c of VFS.children(nodeId)) await collectFiles(c.id, prefix + n.name + '/', _depth + 1);
             } else {
                 const rec = await DB.getFile(nodeId); if (!rec) return;
                 const buf = await Crypto.decryptBin(App.key, rec.iv, rec.blob);
@@ -1250,6 +1260,11 @@ async function exportContainerFile(c) {
 
 async function importContainerFile(file) {
     if (!file) return;
+    const MAX_IMPORT_SIZE = 256 * 1024 * 1024; // 256 MB hard cap
+    if (file.size > MAX_IMPORT_SIZE) {
+        toast(`Import file too large (max ${fmtSize(MAX_IMPORT_SIZE)})`, 'error');
+        return;
+    }
     showLoading('Importing container…');
     try {
         const arrayBuf = await file.arrayBuffer(),
