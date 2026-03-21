@@ -2778,7 +2778,7 @@ class FolderWindow {
         items.push({ sep: true });
         items.push({ label: 'Sort', icon: Icons.sort, submenu: sortSub });
         items.push({ sep: true });
-        items.push({ label: 'Refresh', icon: Icons.refresh, action: () => this.render() });
+        items.push({ label: 'Refresh', icon: Icons.refresh, action: () => { this._renderedFolderId = null; this.render(); } });
         showCtxMenu(e.clientX, e.clientY, items);
     }
 
