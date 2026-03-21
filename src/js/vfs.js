@@ -17,11 +17,28 @@ const VFS = (() => {
         _pos = obj.pos || {};
         if (!_nodes.root) _nodes.root = { id: 'root', type: 'folder', name: '/', parentId: null, ctime: Date.now(), mtime: Date.now() };
         if (!_pos.root) _pos.root = {};
-        // Integrity repair: reattach orphaned nodes whose parentId points to non-existent node
+        // Integrity repair pass 1: reattach orphaned nodes whose parentId points to non-existent node
         Object.values(_nodes).forEach(n => {
             if (n.id !== 'root' && n.parentId && !_nodes[n.parentId]) {
                 console.warn('VFS: orphaned node', n.id, '— reattaching to root');
                 n.parentId = 'root';
+            }
+        });
+        // Integrity repair pass 2: detect and break real parent→child cycles
+        // For each node walk the ancestor chain; if we revisit any node in the same chain → cycle
+        Object.keys(_nodes).forEach(id => {
+            if (id === 'root') return;
+            const chain = new Set();
+            let cur = id;
+            while (cur && cur !== 'root') {
+                if (chain.has(cur)) {
+                    console.warn('VFS: cycle detected at node', cur, '— reattaching to root');
+                    _nodes[cur].parentId = 'root';
+                    break;
+                }
+                if (!_nodes[cur]) break;
+                chain.add(cur);
+                cur = _nodes[cur].parentId;
             }
         });
     }
@@ -39,10 +56,12 @@ const VFS = (() => {
         if (!_pos[nd.id] && nd.type === 'folder') _pos[nd.id] = {};
     }
 
-    function remove(id) {
+    function remove(id, _visited = new Set()) {
+        if (_visited.has(id)) return;
+        _visited.add(id);
         const n = _nodes[id]; if (!n) return;
         if (n.type === 'folder') {
-            children(id).forEach(c => remove(c.id));
+            children(id).forEach(c => remove(c.id, _visited));
             delete _pos[id];
         }
         delPos(n.parentId, id);
