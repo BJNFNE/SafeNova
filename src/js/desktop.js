@@ -41,9 +41,16 @@ async function _loadActivityLog() {
     _activityLog = [];
     if (!App.container) return;
     if (App.container._alogZ) {
-        try { _activityLog = await _decompressLog(App.container._alogZ); } catch { }
+        try {
+            const z = App.container._alogZ;
+            // New format: { iv, blob } — AES-256-GCM encrypted, then zlib-compressed
+            const raw = (z && z.iv && z.blob)
+                ? new Uint8Array(await Crypto.decrypt(App.key, z.iv, z.blob))
+                : z; // legacy: plain compressed bytes (migrate on next flush)
+            _activityLog = await _decompressLog(raw);
+        } catch { }
     }
-    // Migrate old uncompressed format
+    // Migrate old uncompressed plaintext format
     if (Array.isArray(App.container.activityLog)) {
         _activityLog = _activityLog.concat(App.container.activityLog);
         delete App.container.activityLog;
@@ -54,12 +61,33 @@ async function _loadActivityLog() {
 }
 async function _flushActivityLog() {
     _alogSaveTimer = null;
-    if (!App.container || !_activityLog.length) return;
+    if (!App.container || !App.key || !_activityLog.length) return;
     try {
-        App.container._alogZ = await _compressLog(_activityLog);
+        // Compress then encrypt — attacker must NOT read activity logs
+        const compressed = await _compressLog(_activityLog);
+        const { iv, blob } = await Crypto.encrypt(App.key, compressed);
+        App.container._alogZ = { iv, blob };
         delete App.container.activityLog;
         await DB.saveContainer(App.container);
     } catch (e) { console.error('_flushActivityLog', e); }
+}
+
+/* ============================================================
+   OPEN-FOLDER GUARD  — shared by drag handlers and file ops
+   Returns the id of the first open-folder in ids, or null.
+   ============================================================ */
+function _getOpenFolderIds() {
+    if (typeof WinManager === 'undefined') return new Set();
+    const ids = new Set();
+    WinManager._wins.forEach(w => {
+        let cur = w.folderId;
+        while (cur && cur !== 'root') { ids.add(cur); cur = (VFS.node(cur) || {}).parentId; }
+    });
+    return ids;
+}
+function _openFolderGuard(ids) {
+    const open = _getOpenFolderIds();
+    return [...ids].find(id => { const n = VFS.node(id); return n && n.type === 'folder' && open.has(id); }) ?? null;
 }
 
 // ── logActivity ─────────────────────────────────────────────
@@ -1463,6 +1491,214 @@ function _initAreaTouchRubberBand(area, owner) {
     }, { passive: true });
 }
 
+/* ---- Shared touch-drag for icons (Desktop + FolderWindow) ----
+   owner implements: selection (Set-like), folderId, _updateStatus().
+   opts.showSnap: boolean — true for Desktop (show snap preview dot)
+   opts.afterDrop: () => void — extra callback after drop (e.g. updateTaskbar) */
+function _initTouchDragCommon(area, owner, opts = {}) {
+    if (typeof window.ontouchstart === 'undefined' && !navigator.maxTouchPoints) return;
+
+    let _tdNode = null, _tdEl = null,
+        _tdSX = 0, _tdSY = 0, _tdOffX = 0, _tdOffY = 0,
+        _tdMoved = false, _tdTimer = null, _tdActive = false,
+        _tdStartPos = {}, _tdHover = null, _tdSnapPrev = null;
+
+    area.addEventListener('touchstart', e => {
+        if (e.touches.length !== 1) return;
+        const t = e.touches[0],
+            iconEl = t.target?.closest('.file-item[data-id]');
+        if (!iconEl || !area.contains(iconEl)) return;
+
+        const nodeId = iconEl.dataset.id,
+            node = VFS.node(nodeId);
+        if (!node) return;
+
+        _tdMoved = false; _tdActive = false;
+        _tdSX = t.clientX; _tdSY = t.clientY;
+        const r = iconEl.getBoundingClientRect();
+        _tdOffX = t.clientX - r.left;
+        _tdOffY = t.clientY - r.top;
+
+        _tdTimer = setTimeout(() => {
+            if (_tdMoved) return;
+            _tdActive = true;
+            _touchDragActive = true;
+            _tdNode = node;
+            _tdEl = iconEl;
+
+            if (!owner.selection.has(nodeId)) {
+                owner.selection.clear();
+                area.querySelectorAll('.file-item.selected').forEach(i => i.classList.remove('selected'));
+                owner.selection.add(nodeId);
+                iconEl.classList.add('selected');
+                owner._updateStatus();
+            }
+            _tdStartPos = {};
+            owner.selection.forEach(id => {
+                const el = area.querySelector(`.file-item[data-id="${id}"]`);
+                if (el) _tdStartPos[id] = { x: parseInt(el.style.left), y: parseInt(el.style.top) };
+            });
+            iconEl.classList.add('dragging');
+            _cancelHoverTooltip();
+        }, 400);
+    }, { passive: true });
+
+    area.addEventListener('touchmove', e => {
+        if (e.touches.length !== 1) return;
+        const t = e.touches[0];
+        if (Math.abs(t.clientX - _tdSX) + Math.abs(t.clientY - _tdSY) > 5) _tdMoved = true;
+        if ((_tdTimer && !_tdMoved) || _tdActive) { if (e.cancelable) e.preventDefault(); }
+        if (!_tdActive || !_tdNode) return;
+
+        const aR = area.getBoundingClientRect(),
+            mainSp = _tdStartPos[_tdNode.id],
+            rawX = t.clientX - aR.left + area.scrollLeft - _tdOffX,
+            rawY = t.clientY - aR.top + area.scrollTop - _tdOffY,
+            ddx = rawX - mainSp.x, ddy = rawY - mainSp.y;
+
+        owner.selection.forEach(id => {
+            const el = area.querySelector(`.file-item[data-id="${id}"]`),
+                sp = _tdStartPos[id];
+            if (el && sp) { el.style.left = (sp.x + ddx) + 'px'; el.style.top = (sp.y + ddy) + 'px'; }
+        });
+
+        // Highlight folder under finger
+        owner.selection.forEach(id => {
+            const el = area.querySelector(`.file-item[data-id="${id}"]`);
+            if (el) el.style.pointerEvents = 'none';
+        });
+        const hit = document.elementFromPoint(t.clientX, t.clientY);
+        owner.selection.forEach(id => {
+            const el = area.querySelector(`.file-item[data-id="${id}"]`);
+            if (el) el.style.pointerEvents = '';
+        });
+        const folderEl = hit?.closest('.file-item[data-id]');
+        const newHover = folderEl && area.contains(folderEl) &&
+            !owner.selection.has(folderEl.dataset.id) &&
+            VFS.node(folderEl.dataset.id)?.type === 'folder' ? folderEl.dataset.id : null;
+        if (newHover !== _tdHover) {
+            if (_tdHover) area.querySelector(`.file-item[data-id="${_tdHover}"]`)?.classList.remove('drag-target');
+            _tdHover = newHover;
+            if (_tdHover && folderEl) folderEl.classList.add('drag-target');
+        }
+
+        // Snap preview (optional — Desktop only by default)
+        if (opts.showSnap) {
+            if (_tdHover || document.body.classList.contains('no-snap-highlight')) {
+                if (_tdSnapPrev) _tdSnapPrev.style.display = 'none';
+            } else {
+                const occ = new Map();
+                VFS.children(owner.folderId).forEach(n => {
+                    if (owner.selection.has(n.id)) return;
+                    const p = VFS.getPos(owner.folderId, n.id);
+                    if (p) occ.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
+                });
+                const sn = _snapFreeCell(rawX, rawY, occ);
+                if (!_tdSnapPrev) {
+                    _tdSnapPrev = document.createElement('div');
+                    _tdSnapPrev.className = 'snap-preview';
+                    area.appendChild(_tdSnapPrev);
+                }
+                _tdSnapPrev.style.left = sn.x + 'px';
+                _tdSnapPrev.style.top = sn.y + 'px';
+                _tdSnapPrev.style.display = '';
+            }
+        }
+    }, { passive: false });
+
+    area.addEventListener('touchend', async () => {
+        if (_tdTimer) { clearTimeout(_tdTimer); _tdTimer = null; }
+        if (!_tdActive || !_tdNode) { _tdActive = false; _touchDragActive = false; _tdNode = null; return; }
+        _tdActive = false; _touchDragActive = false;
+
+        const node = _tdNode; _tdNode = null;
+        _tdEl?.classList.remove('dragging');
+        if (_tdHover) area.querySelector(`.file-item[data-id="${_tdHover}"]`)?.classList.remove('drag-target');
+        if (_tdSnapPrev) { _tdSnapPrev.remove(); _tdSnapPrev = null; }
+
+        if (_tdHover) {
+            // open-folder guard
+            const blocked = _openFolderGuard(owner.selection);
+            if (blocked) {
+                _snapBack(_tdStartPos);
+                toast(`\u201C${VFS.node(blocked)?.name}\u201D is open in Explorer \u2014 close the window first`, 'error');
+                _tdHover = null;
+                return;
+            }
+            const cycled = [...owner.selection].filter(id => VFS.wouldCycle(id, _tdHover));
+            if (cycled.length) {
+                _snapBack(_tdStartPos);
+                toast(`Cannot move "${VFS.node(cycled[0])?.name}" into itself`, 'error');
+                _tdHover = null;
+                return;
+            }
+            const tgtChildren = VFS.children(_tdHover),
+                existing = new Set(tgtChildren.map(n => n.name.toLowerCase())),
+                dupe = [...owner.selection].find(id => id !== _tdHover && existing.has(VFS.node(id)?.name?.toLowerCase()));
+            if (dupe) {
+                _snapBack(_tdStartPos);
+                toast(`"${VFS.node(dupe)?.name}" already exists in target folder`, 'error');
+                _tdHover = null;
+                return;
+            }
+            const moved = [];
+            owner.selection.forEach(id => {
+                if (id === _tdHover) return;
+                if (VFS.move(id, _tdHover) === 'ok') {
+                    moved.push(id);
+                    area.querySelector(`.file-item[data-id="${id}"]`)?.remove();
+                    area._iconMap?.delete(id);
+                }
+            });
+            if (moved.length) logActivity('move', `${moved.length} item${moved.length > 1 ? 's' : ''} \u2192 ${VFS.node(_tdHover)?.name || 'folder'}`, moved.length);
+            moved.forEach(id => owner.selection.delete(id));
+            _tdHover = null;
+        } else {
+            // Snap to grid in place
+            const occupied = new Map();
+            VFS.children(owner.folderId).forEach(n => {
+                if (owner.selection.has(n.id)) return;
+                const p = VFS.getPos(owner.folderId, n.id);
+                if (p) occupied.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
+            });
+            owner.selection.forEach(id => {
+                const el = area.querySelector(`.file-item[data-id="${id}"]`);
+                if (!el) return;
+                const snapped = _snapFreeCell(parseInt(el.style.left), parseInt(el.style.top), occupied),
+                    cx = Math.round((snapped.x - 8) / GRID_X), cy = Math.round((snapped.y - 8) / GRID_Y);
+                occupied.set(`${cx}_${cy}`, id);
+                el.style.transition = 'left .12s ease,top .12s ease';
+                el.style.left = snapped.x + 'px'; el.style.top = snapped.y + 'px';
+                setTimeout(() => { if (el.parentNode) el.style.transition = ''; }, 150);
+                VFS.setPos(owner.folderId, id, snapped.x, snapped.y);
+            });
+        }
+        owner._updateStatus(); await saveVFS();
+        if (opts.afterDrop) opts.afterDrop();
+        if (typeof WinManager !== 'undefined') WinManager.renderAll();
+
+        function _snapBack(startPos) {
+            Object.entries(startPos).forEach(([id, sp]) => {
+                const el = area.querySelector(`.file-item[data-id="${id}"]`);
+                if (el && sp) {
+                    el.style.transition = 'left .12s ease,top .12s ease';
+                    el.style.left = sp.x + 'px'; el.style.top = sp.y + 'px';
+                    setTimeout(() => { if (el.parentNode) el.style.transition = ''; }, 150);
+                }
+            });
+        }
+    });
+
+    area.addEventListener('touchcancel', () => {
+        _touchDragActive = false; _tdActive = false;
+        if (_tdTimer) { clearTimeout(_tdTimer); _tdTimer = null; }
+        if (_tdEl) { _tdEl.classList.remove('dragging'); _tdEl = null; }
+        if (_tdHover) { area.querySelector(`.file-item[data-id="${_tdHover}"]`)?.classList.remove('drag-target'); _tdHover = null; }
+        if (_tdSnapPrev) { _tdSnapPrev.remove(); _tdSnapPrev = null; }
+        _tdNode = null;
+    }, { passive: true });
+}
+
 /* ---- Shared rubber-band mouse selection ----
    sel = Set, onUpdate = () => void */
 function _rubberBandSelect(e, area, sel, onUpdate) {
@@ -1810,26 +2046,12 @@ function _startIconDrag(e, node, el, srcCtx) {
         }
 
         // ---- pre-check: open-folder guard (only when changing folder) ------
-        if ((escaped || hoverFolder) && typeof WinManager !== 'undefined') {
-            const openFolderIds = new Set();
-            WinManager._wins.forEach(w => {
-                let cur = w.folderId;
-                while (cur && cur !== 'root') { openFolderIds.add(cur); cur = (VFS.node(cur) || {}).parentId; }
-            });
-            const dropT = document.elementFromPoint(lastX, lastY),
-                tfw = dropT?.closest('.folder-window'),
-                tw = tfw ? WinManager._wins.find(w => w.el === tfw) : null,
-                tFid = hoverFolder || (tw ? tw.folderId : null);
-            const blocked = Array.from(srcCtx.selection).find(id => {
-                const n = VFS.node(id);
-                if (!n || n.type !== 'folder' || !openFolderIds.has(id)) return false;
-                if (tFid && VFS.wouldCycle(id, tFid)) return false;
-                return true;
-            });
+        if (escaped || hoverFolder) {
+            const blocked = _openFolderGuard(srcCtx.selection);
             if (blocked) {
                 _snapBackSrc();
                 if (!isDesktop) selEls.forEach(orig => { orig.style.visibility = ''; });
-                toast(`"${VFS.node(blocked)?.name}" is open in Explorer — close the window first`, 'error');
+                toast(`\u201C${VFS.node(blocked)?.name}\u201D is open in Explorer \u2014 close the window first`, 'error');
                 return;
             }
         }
@@ -1995,6 +2217,40 @@ function _startIconDrag(e, node, el, srcCtx) {
 
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
+}
+
+/* ============================================================
+   SHARED KEYBOARD HANDLER — Desktop & FolderWindow
+   syncCtx: fn to set App.folder/selection/winCtx before an operation
+   withSync: fn(op) to set context → run op → restore context (sync only)
+   opts.area: icon container element
+   opts.refresh: fn() called on F5
+   opts.extraKeys: fn(e) → true if handled (for FW-specific keys like Backspace=navup)
+   ============================================================ */
+function _handleKey(e, owner, syncCtx, withSync, opts = {}) {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && owner.selection.size > 0) {
+        syncCtx(); deleteSelected();
+    } else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyC' && owner.selection.size > 0) {
+        withSync(() => copyItems());
+    } else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyX' && owner.selection.size > 0) {
+        withSync(() => cutItems());
+    } else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyV') {
+        syncCtx(); pasteItems();
+    } else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyA') {
+        syncCtx(); selectAll();
+    } else if (e.key === 'Escape') {
+        if (App.clipboard?.op === 'cut') cancelClipboard();
+        owner.selection.clear();
+        (opts.area || document).querySelectorAll('.file-item.selected').forEach(i => i.classList.remove('selected'));
+        owner._updateStatus();
+    } else if (e.key === 'F2' && owner.selection.size === 1) {
+        renameNode(VFS.node([...owner.selection][0]));
+    } else if (e.key === 'F5') {
+        e.preventDefault();
+        if (opts.refresh) opts.refresh();
+    } else if (opts.extraKeys) {
+        opts.extraKeys(e);
+    }
 }
 
 /* ============================================================
@@ -2259,198 +2515,7 @@ const Desktop = {
 
     /* ---- Touch-drag for mobile: long-press (400ms) + drag icons ---- */
     _initTouchDrag(area) {
-        // Only active on touch devices — no-op on desktop
-        if (typeof window.ontouchstart === 'undefined' && !navigator.maxTouchPoints) return;
-
-        let _touchDragNode = null, _touchDragEl = null,
-            _tdStartX = 0, _tdStartY = 0, _tdOffX = 0, _tdOffY = 0,
-            _tdMoved = false, _tdTimer = null, _tdActive = false,
-            _tdStartPos = {}, _tdHoverFolder = null, _tdSnapPrev = null;
-
-        area.addEventListener('touchstart', e => {
-            if (e.touches.length !== 1) return;
-            const t = e.touches[0],
-                iconEl = t.target?.closest('#desktop-area > .file-item[data-id]');
-            if (!iconEl) return;
-
-            const nodeId = iconEl.dataset.id,
-                node = VFS.node(nodeId);
-            if (!node) return;
-
-            _tdMoved = false; _tdActive = false;
-            _tdStartX = t.clientX; _tdStartY = t.clientY;
-            const r = iconEl.getBoundingClientRect();
-            _tdOffX = t.clientX - r.left;
-            _tdOffY = t.clientY - r.top;
-
-            _tdTimer = setTimeout(() => {
-                if (_tdMoved) return;
-                _tdActive = true;
-                _touchDragNode = node;
-                _touchDragEl = iconEl;
-
-                // Select this icon
-                if (!this._sel.has(nodeId)) {
-                    this._sel.clear();
-                    area.querySelectorAll('.file-item.selected').forEach(i => i.classList.remove('selected'));
-                    this._sel.add(nodeId);
-                    iconEl.classList.add('selected');
-                    this._updateSelectionBar();
-                }
-
-                // Snapshot positions of all selected
-                _tdStartPos = {};
-                this._sel.forEach(id => {
-                    const el = area.querySelector(`:scope > .file-item[data-id="${id}"]`);
-                    if (el) _tdStartPos[id] = { x: parseInt(el.style.left), y: parseInt(el.style.top) };
-                });
-
-                _touchDragActive = true;
-                iconEl.classList.add('dragging');
-                _cancelHoverTooltip();
-                e.preventDefault();
-            }, 400);
-        }, { passive: true });
-
-        area.addEventListener('touchmove', e => {
-            if (e.touches.length !== 1) return;
-            const t = e.touches[0],
-                dx = t.clientX - _tdStartX, dy = t.clientY - _tdStartY;
-            if (Math.abs(dx) + Math.abs(dy) > 5) _tdMoved = true;
-            // BUGFIX: prevent the desktop area from scrolling during the 400ms hold and during drag.
-            if ((_tdTimer && !_tdMoved) || _tdActive) { if (e.cancelable) e.preventDefault(); }
-            if (!_tdActive || !_touchDragNode) return;
-
-            const areaRect = area.getBoundingClientRect(),
-                mainSp = _tdStartPos[_touchDragNode.id],
-                rawX = t.clientX - areaRect.left + area.scrollLeft - _tdOffX,
-                rawY = t.clientY - areaRect.top + area.scrollTop - _tdOffY,
-                ddx = rawX - mainSp.x, ddy = rawY - mainSp.y;
-
-            this._sel.forEach(id => {
-                const el = area.querySelector(`:scope > .file-item[data-id="${id}"]`),
-                    sp = _tdStartPos[id];
-                if (el && sp) { el.style.left = (sp.x + ddx) + 'px'; el.style.top = (sp.y + ddy) + 'px'; }
-            });
-
-            // Highlight folder under finger
-            this._sel.forEach(id => {
-                const el = area.querySelector(`:scope > .file-item[data-id="${id}"]`);
-                if (el) el.style.pointerEvents = 'none';
-            });
-            const hit = document.elementFromPoint(t.clientX, t.clientY);
-            this._sel.forEach(id => {
-                const el = area.querySelector(`:scope > .file-item[data-id="${id}"]`);
-                if (el) el.style.pointerEvents = '';
-            });
-            const folderEl = hit?.closest('.file-item[data-id]');
-            const newHover = folderEl && !this._sel.has(folderEl.dataset.id) &&
-                VFS.node(folderEl.dataset.id)?.type === 'folder' ? folderEl.dataset.id : null;
-            if (newHover !== _tdHoverFolder) {
-                if (_tdHoverFolder) area.querySelector(`.file-item[data-id="${_tdHoverFolder}"]`)?.classList.remove('drag-target');
-                _tdHoverFolder = newHover;
-                if (_tdHoverFolder && folderEl) folderEl.classList.add('drag-target');
-            }
-
-            // Snap preview (where icon will land on release)
-            if (_tdHoverFolder || document.body.classList.contains('no-snap-highlight')) {
-                if (_tdSnapPrev) _tdSnapPrev.style.display = 'none';
-            } else {
-                const occ = new Map();
-                VFS.children(this._desktopFolder).forEach(n => {
-                    if (this._sel.has(n.id)) return;
-                    const p = VFS.getPos(this._desktopFolder, n.id);
-                    if (p) occ.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
-                });
-                const sn = _snapFreeCell(rawX, rawY, occ);
-                if (!_tdSnapPrev) {
-                    _tdSnapPrev = document.createElement('div');
-                    _tdSnapPrev.className = 'snap-preview';
-                    area.appendChild(_tdSnapPrev);
-                }
-                _tdSnapPrev.style.left = sn.x + 'px';
-                _tdSnapPrev.style.top = sn.y + 'px';
-                _tdSnapPrev.style.display = '';
-            }
-        }, { passive: false });
-
-        area.addEventListener('touchend', async e => {
-            if (_tdTimer) { clearTimeout(_tdTimer); _tdTimer = null; }
-            if (!_tdActive || !_touchDragNode) { _tdActive = false; _touchDragActive = false; _touchDragNode = null; return; }
-            _tdActive = false; _touchDragActive = false;
-
-            const node = _touchDragNode; _touchDragNode = null;
-            _touchDragEl?.classList.remove('dragging');
-            if (_tdHoverFolder) area.querySelector(`.file-item[data-id="${_tdHoverFolder}"]`)?.classList.remove('drag-target');
-            if (_tdSnapPrev) { _tdSnapPrev.remove(); _tdSnapPrev = null; }
-
-            const occupied = new Map();
-            if (_tdHoverFolder) {
-                // Move into folder
-                const cycled = [...this._sel].filter(id => VFS.wouldCycle(id, _tdHoverFolder));
-                if (cycled.length) {
-                    _snapBack(_tdStartPos); toast(`Cannot move "${VFS.node(cycled[0])?.name}" into itself`, 'error'); return;
-                }
-                const tgtChildren = VFS.children(_tdHoverFolder),
-                    existing = new Set(tgtChildren.map(n => n.name.toLowerCase())),
-                    dupe = [...this._sel].find(id => id !== _tdHoverFolder && existing.has(VFS.node(id)?.name?.toLowerCase()));
-                if (dupe) {
-                    _snapBack(_tdStartPos); toast(`"${VFS.node(dupe)?.name}" already exists in target folder`, 'error'); return;
-                }
-                const moved = [];
-                this._sel.forEach(id => {
-                    if (id === _tdHoverFolder) return;
-                    if (VFS.move(id, _tdHoverFolder) === 'ok') {
-                        moved.push(id);
-                        area.querySelector(`:scope > .file-item[data-id="${id}"]`)?.remove();
-                        area._iconMap?.delete(id);
-                    }
-                });
-                if (moved.length) logActivity('move', `${moved.length} item${moved.length > 1 ? 's' : ''} → ${VFS.node(_tdHoverFolder)?.name || 'folder'}`, moved.length);
-                moved.forEach(id => this._sel.delete(id));
-                _tdHoverFolder = null;
-            } else {
-                // Snap to grid in place
-                VFS.children(this._desktopFolder).forEach(n => {
-                    if (this._sel.has(n.id)) return;
-                    const p = VFS.getPos(this._desktopFolder, n.id);
-                    if (p) occupied.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
-                });
-                this._sel.forEach(id => {
-                    const el = area.querySelector(`:scope > .file-item[data-id="${id}"]`);
-                    if (!el) return;
-                    const snapped = _snapFreeCell(parseInt(el.style.left), parseInt(el.style.top), occupied),
-                        cx = Math.round((snapped.x - 8) / GRID_X), cy = Math.round((snapped.y - 8) / GRID_Y);
-                    occupied.set(`${cx}_${cy}`, id);
-                    el.style.transition = 'left .12s ease,top .12s ease';
-                    el.style.left = snapped.x + 'px'; el.style.top = snapped.y + 'px';
-                    setTimeout(() => { if (el.parentNode) el.style.transition = ''; }, 150);
-                    VFS.setPos(this._desktopFolder, id, snapped.x, snapped.y);
-                });
-            }
-            this._updateSelectionBar(); this.updateTaskbar(); await saveVFS();
-            if (typeof WinManager !== 'undefined') WinManager.renderAll();
-
-            function _snapBack(startPos) {
-                Object.entries(startPos).forEach(([id, sp]) => {
-                    const el = area.querySelector(`:scope > .file-item[data-id="${id}"]`);
-                    if (el && sp) {
-                        el.style.transition = 'left .12s ease,top .12s ease';
-                        el.style.left = sp.x + 'px'; el.style.top = sp.y + 'px';
-                        setTimeout(() => { if (el.parentNode) el.style.transition = ''; }, 150);
-                    }
-                });
-            }
-        });
-
-        area.addEventListener('touchcancel', () => {
-            _touchDragActive = false; _tdActive = false;
-            if (_tdTimer) { clearTimeout(_tdTimer); _tdTimer = null; }
-            if (_touchDragEl) { _touchDragEl.classList.remove('dragging'); _touchDragEl = null; }
-            if (_tdHoverFolder) { area.querySelector(`.file-item[data-id="${_tdHoverFolder}"]`)?.classList.remove('drag-target'); _tdHoverFolder = null; }
-            if (_tdSnapPrev) { _tdSnapPrev.remove(); _tdSnapPrev = null; }
-            _touchDragNode = null;
-        }, { passive: true });
+        _initTouchDragCommon(area, this, { showSnap: true, afterDrop: () => this.updateTaskbar() });
     },
 
     _openNode(node) {
@@ -2604,29 +2669,11 @@ const Desktop = {
     },
 
     _onKey(e) {
-        const _syncCtx = () => { App.folder = this._desktopFolder; App.selection = this._sel; App._winCtx = null; };
-        if (e.key === 'Delete' || e.key === 'Backspace') {
-            if (this._sel.size > 0) { _syncCtx(); deleteSelected(); }
-        } else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyC') {
-            if (this._sel.size > 0) { _syncCtx(); copyItems(); }
-        } else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyX') {
-            if (this._sel.size > 0) { _syncCtx(); cutItems(); }
-        } else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyV') {
-            _syncCtx(); pasteItems();
-        } else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyA') {
-            _syncCtx(); selectAll();
-        } else if (e.key === 'Escape') {
-            if (App.clipboard?.op === 'cut') cancelClipboard();
-            this._sel.clear();
-            document.querySelectorAll('#desktop-area > .file-item.selected').forEach(i => i.classList.remove('selected'));
-            this._updateSelectionBar();
-        } else if (e.key === 'F2') {
-            if (this._sel.size === 1) renameNode(VFS.node([...this._sel][0]));
-        } else if (e.key === 'F5') {
-            e.preventDefault();
-            Desktop._renderIcons();
-            if (typeof WinManager !== 'undefined') WinManager.renderAll();
-        }
+        const sync = () => { App.folder = this._desktopFolder; App.selection = this._sel; App._winCtx = null; };
+        _handleKey(e, this, sync, fn => { sync(); fn(); }, {
+            area: document.getElementById('desktop-area'),
+            refresh: () => { Desktop._renderIcons(); if (typeof WinManager !== 'undefined') WinManager.renderAll(); },
+        });
     }
 };
 
@@ -3061,147 +3108,7 @@ class FolderWindow {
 
     /* ---- TOUCH DRAG for mobile (inside folder window) ---- */
     _initFwTouchDrag(area) {
-        if (typeof window.ontouchstart === 'undefined' && !navigator.maxTouchPoints) return;
-
-        let _tdNode = null, _tdEl = null,
-            _tdSX = 0, _tdSY = 0, _tdOffX = 0, _tdOffY = 0,
-            _tdMoved = false, _tdTimer = null, _tdActive = false,
-            _tdStartPos = {}, _tdHover = null;
-
-        area.addEventListener('touchstart', e => {
-            if (e.touches.length !== 1) return;
-            const t = e.touches[0],
-                iconEl = t.target?.closest('.file-item[data-id]');
-            if (!iconEl || !area.contains(iconEl)) return;
-
-            const nodeId = iconEl.dataset.id,
-                node = VFS.node(nodeId);
-            if (!node) return;
-
-            _tdMoved = false; _tdActive = false;
-            _tdSX = t.clientX; _tdSY = t.clientY;
-            const r = iconEl.getBoundingClientRect();
-            _tdOffX = t.clientX - r.left;
-            _tdOffY = t.clientY - r.top;
-
-            _tdTimer = setTimeout(() => {
-                if (_tdMoved) return;
-                _tdActive = true;
-                _touchDragActive = true;
-                _tdNode = node;
-                _tdEl = iconEl;
-
-                if (!this.selection.has(nodeId)) {
-                    this.selection.clear();
-                    area.querySelectorAll('.file-item.selected').forEach(i => i.classList.remove('selected'));
-                    this.selection.add(nodeId);
-                    iconEl.classList.add('selected');
-                    this._updateStatus();
-                }
-                _tdStartPos = {};
-                this.selection.forEach(id => {
-                    const el = area.querySelector(`.file-item[data-id="${id}"]`);
-                    if (el) _tdStartPos[id] = { x: parseInt(el.style.left), y: parseInt(el.style.top) };
-                });
-                iconEl.classList.add('dragging');
-                _cancelHoverTooltip();
-            }, 400);
-        }, { passive: true });
-
-        area.addEventListener('touchmove', e => {
-            if (e.touches.length !== 1) return;
-            const t = e.touches[0];
-            if (Math.abs(t.clientX - _tdSX) + Math.abs(t.clientY - _tdSY) > 5) _tdMoved = true;
-            // BUGFIX: prevent fw-area from scrolling during the 400ms hold window AND during active drag.
-            // Without this, mobile browsers commit to a scroll gesture before our timer fires,
-            // making subsequent e.preventDefault() calls in touchmove ineffective.
-            if ((_tdTimer && !_tdMoved) || _tdActive) { if (e.cancelable) e.preventDefault(); }
-            if (!_tdActive || !_tdNode) return;
-
-            const aR = area.getBoundingClientRect(),
-                mainSp = _tdStartPos[_tdNode.id],
-                rawX = t.clientX - aR.left + area.scrollLeft - _tdOffX,
-                rawY = t.clientY - aR.top + area.scrollTop - _tdOffY,
-                ddx = rawX - mainSp.x, ddy = rawY - mainSp.y;
-
-            this.selection.forEach(id => {
-                const el = area.querySelector(`.file-item[data-id="${id}"]`),
-                    sp = _tdStartPos[id];
-                if (el && sp) { el.style.left = (sp.x + ddx) + 'px'; el.style.top = (sp.y + ddy) + 'px'; }
-            });
-
-            // Highlight folder under finger
-            this.selection.forEach(id => {
-                const el = area.querySelector(`.file-item[data-id="${id}"]`);
-                if (el) el.style.pointerEvents = 'none';
-            });
-            const hit = document.elementFromPoint(t.clientX, t.clientY);
-            this.selection.forEach(id => {
-                const el = area.querySelector(`.file-item[data-id="${id}"]`);
-                if (el) el.style.pointerEvents = '';
-            });
-            const folderEl = hit?.closest('.file-item[data-id]');
-            const newHover = folderEl && area.contains(folderEl) &&
-                !this.selection.has(folderEl.dataset.id) &&
-                VFS.node(folderEl.dataset.id)?.type === 'folder' ? folderEl.dataset.id : null;
-            if (newHover !== _tdHover) {
-                if (_tdHover) area.querySelector(`.file-item[data-id="${_tdHover}"]`)?.classList.remove('drag-target');
-                _tdHover = newHover;
-                if (_tdHover && folderEl) folderEl.classList.add('drag-target');
-            }
-        }, { passive: false });
-
-        area.addEventListener('touchend', async () => {
-            if (_tdTimer) { clearTimeout(_tdTimer); _tdTimer = null; }
-            if (!_tdActive || !_tdNode) { _tdActive = false; _touchDragActive = false; _tdNode = null; return; }
-            _tdActive = false; _touchDragActive = false;
-
-            const node = _tdNode; _tdNode = null;
-            _tdEl?.classList.remove('dragging');
-            if (_tdHover) area.querySelector(`.file-item[data-id="${_tdHover}"]`)?.classList.remove('drag-target');
-
-            if (_tdHover) {
-                const movedIds = [];
-                this.selection.forEach(id => {
-                    if (id === _tdHover) return;
-                    const n = VFS.node(id); if (!n) return;
-                    const result = VFS.move(id, _tdHover);
-                    if (result === 'duplicate') { toast(`"${n.name}" already exists in target folder`, 'error'); return; }
-                    if (result === 'cycle') { toast(`Cannot move "${n.name}" into itself`, 'error'); return; }
-                    if (result === 'ok') movedIds.push(id);
-                });
-                movedIds.forEach(id => this.selection.delete(id));
-                _tdHover = null;
-            } else {
-                const occupied = new Map();
-                VFS.children(this.folderId).forEach(n => {
-                    if (this.selection.has(n.id)) return;
-                    const p = VFS.getPos(this.folderId, n.id);
-                    if (p) occupied.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
-                });
-                this.selection.forEach(id => {
-                    const el = area.querySelector(`.file-item[data-id="${id}"]`);
-                    if (!el) return;
-                    const snapped = _snapFreeCell(parseInt(el.style.left), parseInt(el.style.top), occupied),
-                        cx = Math.round((snapped.x - 8) / GRID_X), cy = Math.round((snapped.y - 8) / GRID_Y);
-                    occupied.set(`${cx}_${cy}`, id);
-                    el.style.transition = 'left .12s ease,top .12s ease';
-                    el.style.left = snapped.x + 'px'; el.style.top = snapped.y + 'px';
-                    setTimeout(() => { if (el.parentNode) el.style.transition = ''; }, 150);
-                    VFS.setPos(this.folderId, id, snapped.x, snapped.y);
-                });
-            }
-            this._updateStatus(); await saveVFS();
-            if (typeof WinManager !== 'undefined') WinManager.renderAll();
-        });
-
-        area.addEventListener('touchcancel', () => {
-            _touchDragActive = false; _tdActive = false;
-            if (_tdTimer) { clearTimeout(_tdTimer); _tdTimer = null; }
-            if (_tdEl) { _tdEl.classList.remove('dragging'); _tdEl = null; }
-            if (_tdHover) { area.querySelector(`.file-item[data-id="${_tdHover}"]`)?.classList.remove('drag-target'); _tdHover = null; }
-            _tdNode = null;
-        }, { passive: true });
+        _initTouchDragCommon(area, this, { showSnap: false });
     }
 
     /* ---- RUBBER BAND selection ---- */
@@ -3266,35 +3173,16 @@ class FolderWindow {
     }
 
     _onKey(e) {
-        if (['Delete', 'Backspace'].includes(e.key) && this.selection.size > 0) {
-            this._setCtx(); deleteSelected();
-        } else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyC' && this.selection.size > 0) {
-            this._withCtxSync(() => copyItems());
-        } else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyX' && this.selection.size > 0) {
-            this._withCtxSync(() => cutItems());
-        } else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyV') {
-            this._setCtx(); pasteItems();
-        } else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyA') {
-            VFS.children(this.folderId).forEach(n => {
-                this.selection.add(n.id);
-                const el = this.el.querySelector(`.file-item[data-id="${n.id}"]`);
-                if (el) el.classList.add('selected');
-            });
-            this._updateStatus();
-        } else if (e.key === 'Escape') {
-            if (App.clipboard?.op === 'cut') cancelClipboard();
-            this.selection.clear();
-            this.el.querySelectorAll('.file-item.selected').forEach(i => i.classList.remove('selected'));
-            this._updateStatus();
-        } else if (e.key === 'F2' && this.selection.size === 1) {
-            renameNode(VFS.node([...this.selection][0]));
-        } else if (e.key === 'F5') {
-            e.preventDefault();
-            this.render();
-            this.el.querySelector('.fw-area')?.focus();
-        } else if (e.key === 'Backspace') {
-            const n = VFS.node(this.folderId);
-            if (n && n.parentId && n.parentId !== 'root') { this.folderId = n.parentId; this.selection.clear(); this.render(); }
-        }
+        _handleKey(e, this, () => this._setCtx(), fn => this._withCtxSync(fn), {
+            area: this.el,
+            refresh: () => { this.render(); this.el.querySelector('.fw-area')?.focus(); },
+            extraKeys: ev => {
+                if (ev.key === 'Backspace' && !ev.ctrlKey && !ev.metaKey) {
+                    const n = VFS.node(this.folderId);
+                    if (n && n.parentId && n.parentId !== 'root') { this.folderId = n.parentId; this.selection.clear(); this.render(); }
+                    return true;
+                }
+            },
+        });
     }
 }

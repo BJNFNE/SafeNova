@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 /* ============================================================
    FILENAME SANITIZATION
@@ -257,56 +257,49 @@ async function deleteSelected() {
     const ids = [...selRef];
 
     // Prevent deleting folders currently open in Explorer windows
-    if (typeof WinManager !== 'undefined') {
-        const openFolderIds = new Set();
-        WinManager._wins.forEach(w => {
-            let cur = w.folderId;
-            while (cur && cur !== 'root') { openFolderIds.add(cur); cur = (VFS.node(cur) || {}).parentId; }
-        });
-        const blocked = ids.find(id => { const n = VFS.node(id); return n && n.type === 'folder' && openFolderIds.has(id); });
-        if (blocked) {
-            toast(`“${VFS.node(blocked)?.name}” is open in Explorer — close the window first`, 'error');
-            return;
-        }
+    const blocked = _openFolderGuard(ids);
+    if (blocked) {
+        toast(`“${VFS.node(blocked)?.name}” is open in Explorer — close the window first`, 'error');
+        return;
     }
-
-    const names = ids.map(id => VFS.node(id)?.name || '').filter(Boolean);
-    const msg = ids.length === 1
-        ? `Delete "${names[0]}"? This action cannot be undone.`
-        : `Delete ${ids.length} items? This action cannot be undone.`;
-
-    document.getElementById('delete-msg').textContent = msg;
-    Overlay.show('modal-delete');
-    document.getElementById('delete-ok').onclick = async () => {
-        Overlay.hide();
-        showLoading('Deleting...');
-        for (const id of ids) {
-            const n = VFS.node(id); if (!n) continue;
-            if (n.type === 'file') {
-                try { await DB.deleteFile(id); } catch (e) { }
-                delete App.thumbCache[id];
-            } else {
-                const toDelete = [];
-                const _walkSeen = new Set();
-                const walk = fid => {
-                    if (_walkSeen.has(fid)) return;
-                    _walkSeen.add(fid);
-                    VFS.children(fid).forEach(c => { if (c.type === 'file') toDelete.push(c.id); else walk(c.id); });
-                };
-                walk(id);
-                for (const fid of toDelete) { try { await DB.deleteFile(fid); } catch (e) { } delete App.thumbCache[fid]; }
-            }
-            VFS.remove(id);
-        }
-        selRef.clear();
-        await saveVFS();
-        Desktop._patchIcons();
-        if (typeof WinManager !== 'undefined') WinManager.renderAll();
-        hideLoading();
-        toast('Deleted', 'info');
-        logActivity('delete', ids.length === 1 ? names[0] : `${ids.length} items`, ids.length);
-    };
 }
+
+const names = ids.map(id => VFS.node(id)?.name || '').filter(Boolean);
+const msg = ids.length === 1
+    ? `Delete "${names[0]}"? This action cannot be undone.`
+    : `Delete ${ids.length} items? This action cannot be undone.`;
+
+document.getElementById('delete-msg').textContent = msg;
+Overlay.show('modal-delete');
+document.getElementById('delete-ok').onclick = async () => {
+    Overlay.hide();
+    showLoading('Deleting...');
+    for (const id of ids) {
+        const n = VFS.node(id); if (!n) continue;
+        if (n.type === 'file') {
+            try { await DB.deleteFile(id); } catch (e) { }
+            delete App.thumbCache[id];
+        } else {
+            const toDelete = [];
+            const _walkSeen = new Set();
+            const walk = fid => {
+                if (_walkSeen.has(fid)) return;
+                _walkSeen.add(fid);
+                VFS.children(fid).forEach(c => { if (c.type === 'file') toDelete.push(c.id); else walk(c.id); });
+            };
+            walk(id);
+            for (const fid of toDelete) { try { await DB.deleteFile(fid); } catch (e) { } delete App.thumbCache[fid]; }
+        }
+        VFS.remove(id);
+    }
+    selRef.clear();
+    await saveVFS();
+    Desktop._patchIcons();
+    if (typeof WinManager !== 'undefined') WinManager.renderAll();
+    hideLoading();
+    toast('Deleted', 'info');
+    logActivity('delete', ids.length === 1 ? names[0] : `${ids.length} items`, ids.length);
+};
 
 /* ============================================================
    NEW TEXT FILE  —  BUG FIX: just creates the file, does NOT open editor
@@ -433,14 +426,10 @@ function renameNode(node) {
     if (!node) return;
 
     // Prevent renaming folders currently open in Explorer windows
-    if (typeof WinManager !== 'undefined' && node.type === 'folder') {
-        const openFolderIds = new Set();
-        WinManager._wins.forEach(w => {
-            let cur = w.folderId;
-            while (cur && cur !== 'root') { openFolderIds.add(cur); cur = (VFS.node(cur) || {}).parentId; }
-        });
-        if (openFolderIds.has(node.id)) {
-            toast(`“${node.name}” is open in Explorer — close the window first`, 'error');
+    if (node.type === 'folder') {
+        const blocked = _openFolderGuard([node.id]);
+        if (blocked) {
+        toast(`“${node.name}” is open in Explorer — close the window first`, 'error');
             return;
         }
     }
@@ -481,20 +470,10 @@ function copyItems() {
 }
 function cutItems() {
     // Prevent cutting folders currently open in Explorer windows
-    if (typeof WinManager !== 'undefined') {
-        const openFolderIds = new Set();
-        WinManager._wins.forEach(w => {
-            let cur = w.folderId;
-            while (cur && cur !== 'root') { openFolderIds.add(cur); cur = (VFS.node(cur) || {}).parentId; }
-        });
-        const blocked = [...App.selection].find(id => {
-            const n = VFS.node(id);
-            return n && n.type === 'folder' && openFolderIds.has(id);
-        });
-        if (blocked) {
-            toast(`“${VFS.node(blocked)?.name}” is open in Explorer — close the window first`, 'error');
-            return;
-        }
+    const blocked = _openFolderGuard(App.selection);
+    if (blocked) {
+        toast(`“${VFS.node(blocked)?.name}” is open in Explorer — close the window first`, 'error');
+        return;
     }
 
     App.clipboard = { op: 'cut', ids: [...App.selection] };
@@ -518,18 +497,10 @@ async function pasteItems() {
     const { op, ids } = App.clipboard;
 
     // Prevent pasting a cut folder if it's currently open in Explorer windows
-    if (op === 'cut' && typeof WinManager !== 'undefined') {
-        const openFolderIds = new Set();
-        WinManager._wins.forEach(w => {
-            let cur = w.folderId;
-            while (cur && cur !== 'root') { openFolderIds.add(cur); cur = (VFS.node(cur) || {}).parentId; }
-        });
-        const blocked = ids.find(id => {
-            const n = VFS.node(id);
-            return n && n.type === 'folder' && openFolderIds.has(id);
-        });
+    if (op === 'cut') {
+        const blocked = _openFolderGuard(ids);
         if (blocked) {
-            toast(`“${VFS.node(blocked)?.name}” is open in Explorer — close the window first`, 'error');
+        toast(`“${VFS.node(blocked)?.name}” is open in Explorer — close the window first`, 'error');
             // Abort the entire paste operation to prevent partial moves
             return;
         }
@@ -583,7 +554,8 @@ function selectAll() {
         const el = document.querySelector(`.file-item[data-id="${n.id}"]`);
         if (el) el.classList.add('selected');
     });
-    if (typeof Desktop !== 'undefined') Desktop._updateSelectionBar();
+    if (App._winCtx) App._winCtx._updateStatus();
+    else if (typeof Desktop !== 'undefined') Desktop._updateSelectionBar();
 }
 
 function sortIcons(by = 'name', dir = 'asc', winCtx = null) {
@@ -1326,13 +1298,18 @@ async function exportContainerFile(c, requirePassword = true) {
             { name: 'meta/3', data: encManifestBlob, mtime: now },
             { name: 'safenova_efs/workspace.bin', data: workspaceBin, mtime: now },
         ];
-        // Optionally include activity log (compressed)
+        // Optionally include activity log (encrypted)
         if (c.settings?.exportWithLogs === true) {
-            const logData = (App.container?.id === c.id && typeof _activityLog !== 'undefined' && _activityLog.length)
-                ? await _compressLog(_activityLog)
-                : c._alogZ;
-            if (logData && (logData.byteLength || logData.length)) {
-                entries.push({ name: 'meta/activity_log.zlib', data: new Uint8Array(logData), mtime: now });
+            let alogEnc;
+            if (App.container?.id === c.id && typeof _activityLog !== 'undefined' && _activityLog.length) {
+                const compressed = await _compressLog(_activityLog);
+                alogEnc = await Crypto.encrypt(App.key, compressed);
+            } else if (c._alogZ && c._alogZ.iv && c._alogZ.blob) {
+                alogEnc = c._alogZ;
+            }
+            if (alogEnc) {
+                const alogBytes = new TextEncoder().encode(JSON.stringify(alogEnc));
+                entries.push({ name: 'meta/activity_logs/0', data: alogBytes, mtime: now });
             }
         }
         const zip = _buildZip(entries);
@@ -1398,7 +1375,7 @@ async function importContainerFile(file) {
                     name = nameRaw + ' (' + suffix++ + ')';
 
                 const newCid = uid();
-                await DB.saveContainer({
+                const cObj = {
                     id: newCid, name, createdAt, salt, verIv, verBlob, totalSize,
                     settings: importedSettings || undefined,
                     lazyWorkspace: {
@@ -1406,7 +1383,15 @@ async function importContainerFile(file) {
                         mIv: entries['meta/2'],
                         mBlob: entries['meta/3'],
                     }
-                });
+                };
+                // Restore encrypted activity log (if present)
+                if (entries['meta/activity_logs/0']) {
+                    try { cObj._alogZ = JSON.parse(new TextDecoder().decode(entries['meta/activity_logs/0'])); } catch {}
+                } else if (entries['meta/activity_log.zlib']) {
+                    // Legacy: plain compressed bytes — store raw, will be encrypted on first flush
+                    cObj._alogZ = entries['meta/activity_log.zlib'];
+                }
+                await DB.saveContainer(cObj);
                 await DB.saveVFS(newCid, Array.from(entries['meta/0']), buf2b64(entries['meta/1']));
                 hideLoading();
                 toast(`Container "${name}" imported`, 'success');
