@@ -525,11 +525,141 @@ function _buildIconEl(node, pos) {
 }
 
 /* ============================================================
+   SHARED ICON INTERACTION HELPERS
+   owner implements: _onIconMousedown(e,div,node), _openNode(node), _contextIcon(e,node)
+   ============================================================ */
+function _attachIconListeners(div, node, owner) {
+    div.addEventListener('mousedown', e => owner._onIconMousedown(e, div, node));
+    div.addEventListener('dblclick', e => { e.stopPropagation(); owner._openNode(node); });
+    let _isTouchEvent = false;
+    div.addEventListener('contextmenu', e => { e.preventDefault(); if (_touchDragActive || _isTouchEvent) return; e.stopPropagation(); owner._contextIcon(e, node); });
+    // Mobile: single tap → context menu, double tap → open
+    let _ts = 0, _tm = false, _lastTap = 0;
+    div.addEventListener('touchstart', () => { _ts = Date.now(); _tm = false; _isTouchEvent = true; _cancelHoverTooltip(); }, { passive: true });
+    div.addEventListener('touchmove', () => { _tm = true; }, { passive: true });
+    div.addEventListener('touchend', e => {
+        setTimeout(() => { _isTouchEvent = false; }, 500);
+        if (_tm || Date.now() - _ts > 350) return;
+        e.preventDefault();
+        const now = Date.now(), t = e.changedTouches[0];
+        if (now - _lastTap < 300) { _lastTap = 0; owner._openNode(node); }
+        else { _lastTap = now; owner._contextIcon({ clientX: t.clientX, clientY: t.clientY, ctrlKey: false, metaKey: false, preventDefault() { }, stopPropagation() { } }, node); }
+    });
+    div.addEventListener('touchcancel', () => { _isTouchEvent = false; }, { passive: true });
+}
+
+/* ---- Shared touch rubber-band selection on empty area + long-press context menu ----
+   owner implements: selection (Set), _updateStatus(), _contextDesktop(e) */
+function _initAreaTouchRubberBand(area, owner) {
+    let _lpTimer = null,
+        _rbBand = null, _rbSX = 0, _rbSY = 0, _rbActive = false, _rbMoved = false, _rbOnEmpty = false;
+
+    area.addEventListener('touchstart', e => {
+        if (e.touches.length !== 1) return;
+        const t = e.touches[0];
+        // BUGFIX: when this handler is on #desktop-area, a touch inside a FolderWindow bubbles up
+        // here too — ignore it so we don't open the Desktop context menu over the FW's own menu.
+        if (!area.closest('.folder-window') && t.target?.closest('.folder-window')) return;
+        if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+        if (_rbBand) { _rbBand.remove(); _rbBand = null; }
+        _rbActive = false; _rbMoved = false;
+        _rbSX = t.clientX; _rbSY = t.clientY;
+        const iconEl = t.target?.closest('.file-item[data-id]');
+        _rbOnEmpty = !iconEl || !area.contains(iconEl);
+        if (_rbOnEmpty) {
+            _lpTimer = setTimeout(() => {
+                if (_rbMoved) return;
+                owner._contextDesktop({ clientX: t.clientX, clientY: t.clientY, preventDefault() { }, stopPropagation() { } });
+            }, 600);
+        }
+    }, { passive: true });
+
+    area.addEventListener('touchmove', e => {
+        if (e.touches.length !== 1) return;
+        const t = e.touches[0];
+        const dx = t.clientX - _rbSX, dy = t.clientY - _rbSY;
+        if (!_rbMoved && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+            _rbMoved = true;
+            if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+        }
+        if (!_rbOnEmpty) return;
+        if (!_rbActive && _rbMoved) {
+            _rbActive = true;
+            owner.selection.clear();
+            area.querySelectorAll(':scope > .file-item.selected').forEach(i => i.classList.remove('selected'));
+            owner._updateStatus();
+            const aR = area.getBoundingClientRect();
+            _rbBand = document.createElement('div');
+            _rbBand.className = 'rubberband';
+            _rbBand.style.cssText = `left:${_rbSX - aR.left + area.scrollLeft}px;top:${_rbSY - aR.top + area.scrollTop}px;width:0;height:0`;
+            area.appendChild(_rbBand);
+        }
+        if (_rbActive && _rbBand) {
+            if (e.cancelable) e.preventDefault();
+            const aR = area.getBoundingClientRect(),
+                sx = _rbSX - aR.left + area.scrollLeft, sy = _rbSY - aR.top + area.scrollTop,
+                cx = t.clientX - aR.left + area.scrollLeft, cy = t.clientY - aR.top + area.scrollTop,
+                x = Math.min(sx, cx), y = Math.min(sy, cy),
+                w = Math.abs(cx - sx), h = Math.abs(cy - sy);
+            _rbBand.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
+            const bx2 = x + w, by2 = y + h;
+            area.querySelectorAll(':scope > .file-item').forEach(item => {
+                const ix = parseInt(item.style.left), iy = parseInt(item.style.top);
+                const hit = ix < bx2 && (ix + ICON_W) > x && iy < by2 && (iy + ICON_H) > y;
+                if (hit) { owner.selection.add(item.dataset.id); item.classList.add('selected'); }
+                else { owner.selection.delete(item.dataset.id); item.classList.remove('selected'); }
+            });
+            owner._updateStatus();
+        }
+    }, { passive: false });
+
+    area.addEventListener('touchend', () => {
+        if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+        if (_rbBand) { _rbBand.remove(); _rbBand = null; }
+        _rbActive = false; _rbMoved = false; _rbOnEmpty = false;
+    }, { passive: true });
+}
+
+/* ---- Shared rubber-band mouse selection ----
+   sel = Set, onUpdate = () => void */
+function _rubberBandSelect(e, area, sel, onUpdate) {
+    const rect = area.getBoundingClientRect(),
+        sx = e.clientX - rect.left + area.scrollLeft,
+        sy = e.clientY - rect.top + area.scrollTop,
+        band = document.createElement('div');
+    band.className = 'rubberband';
+    band.style.cssText = `left:${sx}px;top:${sy}px;width:0;height:0`;
+    area.appendChild(band);
+    const onMove = mv => {
+        const cx = mv.clientX - rect.left + area.scrollLeft,
+            cy = mv.clientY - rect.top + area.scrollTop,
+            x = Math.min(sx, cx), y = Math.min(sy, cy),
+            w = Math.abs(cx - sx), h = Math.abs(cy - sy);
+        band.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
+        const bx1 = x, by1 = y, bx2 = x + w, by2 = y + h;
+        area.querySelectorAll(':scope > .file-item').forEach(item => {
+            const ix = parseInt(item.style.left), iy = parseInt(item.style.top);
+            const hit = ix < bx2 && (ix + ICON_W) > bx1 && iy < by2 && (iy + ICON_H) > by1;
+            if (hit) { sel.add(item.dataset.id); item.classList.add('selected'); }
+            else if (!e.ctrlKey && !e.metaKey) { sel.delete(item.dataset.id); item.classList.remove('selected'); }
+        });
+        onUpdate();
+    };
+    const onUp = () => { band.remove(); document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+}
+
+/* ============================================================
    DESKTOP
    ============================================================ */
 const Desktop = {
     _desktopFolder: 'root',
     _sel: App.selection,   // main desktop's own selection (same reference as App.selection initially)
+    // Unified interface aliases used by shared helpers (_attachIconListeners, _initAreaTouchRubberBand, _rubberBandSelect)
+    get selection() { return this._sel; },
+    get folderId() { return this._desktopFolder; },
+    _updateStatus() { this._updateSelectionBar(); },
 
     render() {
         // Restore main desktop's folder + selection as the active App context
@@ -589,22 +719,7 @@ const Desktop = {
             if (this._sel.has(node.id)) div.classList.add('selected');
             // pop-in animation with stagger
             div.style.animation = `iconPop 0.12s ease ${Math.min(idx * 15, 200)}ms both`;
-            div.addEventListener('mousedown', e => this._onIconMousedown(e, div, node));
-            div.addEventListener('dblclick', e => { e.stopPropagation(); this._openNode(node); });
-            div.addEventListener('contextmenu', e => { e.preventDefault(); if (_touchDragActive) return; e.stopPropagation(); this._contextIcon(e, node); });
-            // Mobile: single tap → context menu, double tap → open
-            {
-                let _ts = 0, _tm = false, _lastTap = 0;
-                div.addEventListener('touchstart', () => { _ts = Date.now(); _tm = false; _cancelHoverTooltip(); }, { passive: true });
-                div.addEventListener('touchmove', () => { _tm = true; }, { passive: true });
-                div.addEventListener('touchend', e => {
-                    if (_tm || Date.now() - _ts > 350) return;
-                    e.preventDefault();
-                    const now = Date.now(), t = e.changedTouches[0];
-                    if (now - _lastTap < 300) { _lastTap = 0; this._openNode(node); }
-                    else { _lastTap = now; this._contextIcon({ clientX: t.clientX, clientY: t.clientY, ctrlKey: false, metaKey: false, preventDefault() { }, stopPropagation() { } }, node); }
-                });
-            }
+            _attachIconListeners(div, node, this);
             area.appendChild(div);
         });
 
@@ -647,22 +762,7 @@ const Desktop = {
                 const div = _buildIconEl(node, pos);
                 if (this._sel.has(node.id)) div.classList.add('selected');
                 div.style.animation = 'iconPop 0.12s ease both';
-                div.addEventListener('mousedown', e => this._onIconMousedown(e, div, node));
-                div.addEventListener('dblclick', e => { e.stopPropagation(); this._openNode(node); });
-                div.addEventListener('contextmenu', e => { e.preventDefault(); if (_touchDragActive) return; e.stopPropagation(); this._contextIcon(e, node); });
-                // Mobile: single tap → context menu, double tap → open
-                {
-                    let _ts = 0, _tm = false, _lastTap = 0;
-                    div.addEventListener('touchstart', () => { _ts = Date.now(); _tm = false; _cancelHoverTooltip(); }, { passive: true });
-                    div.addEventListener('touchmove', () => { _tm = true; }, { passive: true });
-                    div.addEventListener('touchend', e => {
-                        if (_tm || Date.now() - _ts > 350) return;
-                        e.preventDefault();
-                        const now = Date.now(), t = e.changedTouches[0];
-                        if (now - _lastTap < 300) { _lastTap = 0; this._openNode(node); }
-                        else { _lastTap = now; this._contextIcon({ clientX: t.clientX, clientY: t.clientY, ctrlKey: false, metaKey: false, preventDefault() { }, stopPropagation() { } }, node); }
-                    });
-                }
+                _attachIconListeners(div, node, this);
                 area.appendChild(div);
             }
         });
@@ -1125,9 +1225,9 @@ const Desktop = {
             const t = e.touches[0];
             const dx = t.clientX - _tdStartX, dy = t.clientY - _tdStartY;
             if (Math.abs(dx) + Math.abs(dy) > 5) _tdMoved = true;
-
+            // BUGFIX: prevent the desktop area from scrolling during the 400ms hold and during drag.
+            if ((_tdTimer && !_tdMoved) || _tdActive) { if (e.cancelable) e.preventDefault(); }
             if (!_tdActive || !_touchDragNode) return;
-            if (e.cancelable) e.preventDefault();
 
             const areaRect = area.getBoundingClientRect();
             const mainSp = _tdStartPos[_touchDragNode.id];
@@ -1430,74 +1530,7 @@ const Desktop = {
         });
 
         /* ---- Touch: rubber-band select on empty area + long-press context menu ---- */
-        let _lpTimer = null,
-            _rbBand = null, _rbSX = 0, _rbSY = 0, _rbActive = false, _rbMoved = false, _rbOnEmpty = false;
-
-        area.addEventListener('touchstart', e => {
-            if (e.touches.length !== 1) return;
-            if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
-            if (_rbBand) { _rbBand.remove(); _rbBand = null; }
-            _rbActive = false; _rbMoved = false;
-            const t = e.touches[0];
-            _rbSX = t.clientX; _rbSY = t.clientY;
-            const iconEl = t.target?.closest('#desktop-area > .file-item[data-id]');
-            _rbOnEmpty = !iconEl;
-            if (_rbOnEmpty) {
-                _lpTimer = setTimeout(() => {
-                    if (_rbMoved) return;
-                    this._contextDesktop({ clientX: t.clientX, clientY: t.clientY, preventDefault() { }, stopPropagation() { } });
-                }, 600);
-            }
-        }, { passive: true });
-
-        area.addEventListener('touchmove', e => {
-            if (e.touches.length !== 1) return;
-            const t = e.touches[0];
-            const dx = t.clientX - _rbSX, dy = t.clientY - _rbSY;
-            if (!_rbMoved && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
-                _rbMoved = true;
-                if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
-            }
-            if (!_rbOnEmpty) return;
-            if (!_rbActive && _rbMoved) {
-                _rbActive = true;
-                this._sel.clear();
-                area.querySelectorAll('#desktop-area > .file-item.selected').forEach(i => i.classList.remove('selected'));
-                this._updateSelectionBar();
-                const aR = area.getBoundingClientRect();
-                _rbBand = document.createElement('div');
-                _rbBand.className = 'rubberband';
-                const bsx = _rbSX - aR.left + area.scrollLeft;
-                const bsy = _rbSY - aR.top + area.scrollTop;
-                _rbBand.style.cssText = `left:${bsx}px;top:${bsy}px;width:0;height:0`;
-                area.appendChild(_rbBand);
-            }
-            if (_rbActive && _rbBand) {
-                if (e.cancelable) e.preventDefault();
-                const aR = area.getBoundingClientRect(),
-                    sx = _rbSX - aR.left + area.scrollLeft,
-                    sy = _rbSY - aR.top + area.scrollTop,
-                    cx = t.clientX - aR.left + area.scrollLeft,
-                    cy = t.clientY - aR.top + area.scrollTop,
-                    x = Math.min(sx, cx), y = Math.min(sy, cy),
-                    w = Math.abs(cx - sx), h = Math.abs(cy - sy);
-                _rbBand.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
-                const bx2 = x + w, by2 = y + h;
-                area.querySelectorAll(':scope > .file-item').forEach(item => {
-                    const ix = parseInt(item.style.left), iy = parseInt(item.style.top);
-                    const hit = ix < bx2 && (ix + ICON_W) > x && iy < by2 && (iy + ICON_H) > y;
-                    if (hit) { this._sel.add(item.dataset.id); item.classList.add('selected'); }
-                    else { this._sel.delete(item.dataset.id); item.classList.remove('selected'); }
-                });
-                this._updateSelectionBar();
-            }
-        }, { passive: false });
-
-        area.addEventListener('touchend', () => {
-            if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
-            if (_rbBand) { _rbBand.remove(); _rbBand = null; }
-            _rbActive = false; _rbMoved = false; _rbOnEmpty = false;
-        }, { passive: true });
+        _initAreaTouchRubberBand(area, this);
 
         // Global: dismiss context menu on any LMB click outside the menu
         document.addEventListener('mousedown', e => {
@@ -1510,33 +1543,7 @@ const Desktop = {
     },
 
     _startRubberBand(e) {
-        const area = document.getElementById('desktop-area'),
-            rect = area.getBoundingClientRect(),
-            sx = e.clientX - rect.left + area.scrollLeft,
-            sy = e.clientY - rect.top + area.scrollTop,
-            band = document.createElement('div');
-        band.className = 'rubberband';
-        band.style.cssText = `left:${sx}px;top:${sy}px;width:0;height:0`;
-        area.appendChild(band);
-
-        const onMove = mv => {
-            const cx = mv.clientX - rect.left + area.scrollLeft,
-                cy = mv.clientY - rect.top + area.scrollTop,
-                x = Math.min(sx, cx), y = Math.min(sy, cy),
-                w = Math.abs(cx - sx), h = Math.abs(cy - sy);
-            band.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
-            const bx1 = x, by1 = y, bx2 = x + w, by2 = y + h;
-            document.querySelectorAll('#desktop-area > .file-item').forEach(item => {
-                const ix = parseInt(item.style.left), iy = parseInt(item.style.top);
-                const hit = ix < bx2 && (ix + ICON_W) > bx1 && iy < by2 && (iy + ICON_H) > by1;
-                if (hit) { this._sel.add(item.dataset.id); item.classList.add('selected'); }
-                else if (!e.ctrlKey && !e.metaKey) { this._sel.delete(item.dataset.id); item.classList.remove('selected'); }
-            });
-            this._updateSelectionBar();
-        };
-        const onUp = () => { band.remove(); document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
-        document.addEventListener('mousemove', onMove);
-        document.addEventListener('mouseup', onUp);
+        _rubberBandSelect(e, document.getElementById('desktop-area'), this._sel, () => this._updateSelectionBar());
     },
 
     _onKey(e) {
@@ -1732,7 +1739,7 @@ class FolderWindow {
         // Content area events
         const area = el.querySelector('.fw-area');
         area.addEventListener('contextmenu', e => {
-            if (e.target === area) { e.preventDefault(); e.stopPropagation(); this._ctxDesktop(e); }
+            if (e.target === area) { e.preventDefault(); e.stopPropagation(); this._contextDesktop(e); }
         });
         area.addEventListener('mousedown', e => {
             if (e.target !== area) return;
@@ -1780,74 +1787,7 @@ class FolderWindow {
         });
 
         /* ---- Touch: rubber-band select on empty area + long-press context menu ---- */
-        let _fwLpTimer = null,
-            _fwRbBand = null, _fwRbSX = 0, _fwRbSY = 0, _fwRbActive = false, _fwRbMoved = false, _fwRbOnEmpty = false;
-
-        area.addEventListener('touchstart', e => {
-            if (e.touches.length !== 1) return;
-            if (_fwLpTimer) { clearTimeout(_fwLpTimer); _fwLpTimer = null; }
-            if (_fwRbBand) { _fwRbBand.remove(); _fwRbBand = null; }
-            _fwRbActive = false; _fwRbMoved = false;
-            const t = e.touches[0];
-            _fwRbSX = t.clientX; _fwRbSY = t.clientY;
-            const iconEl = t.target?.closest('.file-item[data-id]');
-            _fwRbOnEmpty = !iconEl || !area.contains(iconEl);
-            if (_fwRbOnEmpty) {
-                _fwLpTimer = setTimeout(() => {
-                    if (_fwRbMoved) return;
-                    this._ctxDesktop({ clientX: t.clientX, clientY: t.clientY, preventDefault() { }, stopPropagation() { } });
-                }, 600);
-            }
-        }, { passive: true });
-
-        area.addEventListener('touchmove', e => {
-            if (e.touches.length !== 1) return;
-            const t = e.touches[0];
-            const dx = t.clientX - _fwRbSX, dy = t.clientY - _fwRbSY;
-            if (!_fwRbMoved && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
-                _fwRbMoved = true;
-                if (_fwLpTimer) { clearTimeout(_fwLpTimer); _fwLpTimer = null; }
-            }
-            if (!_fwRbOnEmpty || _touchDragActive) return;
-            if (!_fwRbActive && _fwRbMoved) {
-                _fwRbActive = true;
-                this.selection.clear();
-                area.querySelectorAll('.file-item.selected').forEach(i => i.classList.remove('selected'));
-                this._updateStatus();
-                const aR = area.getBoundingClientRect();
-                _fwRbBand = document.createElement('div');
-                _fwRbBand.className = 'rubberband';
-                const bsx = _fwRbSX - aR.left + area.scrollLeft;
-                const bsy = _fwRbSY - aR.top + area.scrollTop;
-                _fwRbBand.style.cssText = `left:${bsx}px;top:${bsy}px;width:0;height:0`;
-                area.appendChild(_fwRbBand);
-            }
-            if (_fwRbActive && _fwRbBand) {
-                if (e.cancelable) e.preventDefault();
-                const aR = area.getBoundingClientRect(),
-                    sx = _fwRbSX - aR.left + area.scrollLeft,
-                    sy = _fwRbSY - aR.top + area.scrollTop,
-                    cx = t.clientX - aR.left + area.scrollLeft,
-                    cy = t.clientY - aR.top + area.scrollTop,
-                    x = Math.min(sx, cx), y = Math.min(sy, cy),
-                    w = Math.abs(cx - sx), h = Math.abs(cy - sy);
-                _fwRbBand.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
-                const bx2 = x + w, by2 = y + h;
-                area.querySelectorAll('.file-item').forEach(item => {
-                    const ix = parseInt(item.style.left), iy = parseInt(item.style.top);
-                    const hit = ix < bx2 && (ix + ICON_W) > x && iy < by2 && (iy + ICON_H) > y;
-                    if (hit) { this.selection.add(item.dataset.id); item.classList.add('selected'); }
-                    else { this.selection.delete(item.dataset.id); item.classList.remove('selected'); }
-                });
-                this._updateStatus();
-            }
-        }, { passive: false });
-
-        area.addEventListener('touchend', () => {
-            if (_fwLpTimer) { clearTimeout(_fwLpTimer); _fwLpTimer = null; }
-            if (_fwRbBand) { _fwRbBand.remove(); _fwRbBand = null; }
-            _fwRbActive = false; _fwRbMoved = false; _fwRbOnEmpty = false;
-        }, { passive: true });
+        _initAreaTouchRubberBand(area, this);
 
         this._initFwTouchDrag(area);
         this._addResizeHandle();
@@ -1986,27 +1926,7 @@ class FolderWindow {
         if (this.selection.has(node.id)) div.classList.add('selected');
         div.style.animation = `iconPop 0.12s ease ${Math.min(idx * 15, 200)}ms both`;
 
-        div.addEventListener('mousedown', e => this._onIconMousedown(e, div, node));
-        div.addEventListener('dblclick', e => { e.stopPropagation(); this._openNode(node); });
-        // _isTouchEvent stays true from touchstart → 500ms after touchend, so any browser-generated
-        // contextmenu event from OS long-press is suppressed (we use our own tap-based context menu).
-        let _isTouchEvent = false;
-        div.addEventListener('contextmenu', e => { e.preventDefault(); if (_touchDragActive || _isTouchEvent) return; e.stopPropagation(); this._ctxIcon(e, node); });
-        // Mobile: single tap → context menu, double tap → open
-        {
-            let _ts = 0, _tm = false, _lastTap = 0;
-            div.addEventListener('touchstart', () => { _ts = Date.now(); _tm = false; _isTouchEvent = true; _cancelHoverTooltip(); }, { passive: true });
-            div.addEventListener('touchmove', () => { _tm = true; }, { passive: true });
-            div.addEventListener('touchend', e => {
-                setTimeout(() => { _isTouchEvent = false; }, 500);
-                if (_tm || Date.now() - _ts > 350) return;
-                e.preventDefault();
-                const now = Date.now(), t = e.changedTouches[0];
-                if (now - _lastTap < 300) { _lastTap = 0; this._openNode(node); }
-                else { _lastTap = now; this._ctxIcon({ clientX: t.clientX, clientY: t.clientY, ctrlKey: false, metaKey: false, preventDefault() { }, stopPropagation() { } }, node); }
-            });
-            div.addEventListener('touchcancel', () => { _isTouchEvent = false; }, { passive: true });
-        }
+        _attachIconListeners(div, node, this);
         return div;
     }
 
@@ -2627,8 +2547,11 @@ class FolderWindow {
             if (e.touches.length !== 1) return;
             const t = e.touches[0];
             if (Math.abs(t.clientX - _tdSX) + Math.abs(t.clientY - _tdSY) > 5) _tdMoved = true;
+            // BUGFIX: prevent fw-area from scrolling during the 400ms hold window AND during active drag.
+            // Without this, mobile browsers commit to a scroll gesture before our timer fires,
+            // making subsequent e.preventDefault() calls in touchmove ineffective.
+            if ((_tdTimer && !_tdMoved) || _tdActive) { if (e.cancelable) e.preventDefault(); }
             if (!_tdActive || !_tdNode) return;
-            if (e.cancelable) e.preventDefault();
 
             const aR = area.getBoundingClientRect();
             const mainSp = _tdStartPos[_tdNode.id];
@@ -2718,34 +2641,11 @@ class FolderWindow {
 
     /* ---- RUBBER BAND selection ---- */
     _startRubberBand(e) {
-        const area = this.el.querySelector('.fw-area'),
-            rect = area.getBoundingClientRect(),
-            sx = e.clientX - rect.left + area.scrollLeft,
-            sy = e.clientY - rect.top + area.scrollTop,
-            band = document.createElement('div');
-        band.className = 'rubberband';
-        band.style.cssText = `left:${sx}px;top:${sy}px;width:0;height:0`;
-        area.appendChild(band);
-        const onMove = mv => {
-            const cx = mv.clientX - rect.left + area.scrollLeft,
-                cy = mv.clientY - rect.top + area.scrollTop,
-                x = Math.min(sx, cx), y = Math.min(sy, cy), w = Math.abs(cx - sx), h = Math.abs(cy - sy);
-            band.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
-            area.querySelectorAll('.file-item').forEach(item => {
-                const ix = parseInt(item.style.left), iy = parseInt(item.style.top);
-                const hit = ix < x + w && ix + ICON_W > x && iy < y + h && iy + ICON_H > y;
-                if (hit) { this.selection.add(item.dataset.id); item.classList.add('selected'); }
-                else if (!e.ctrlKey) { this.selection.delete(item.dataset.id); item.classList.remove('selected'); }
-            });
-            this._updateStatus();
-        };
-        const onUp = () => { band.remove(); document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
-        document.addEventListener('mousemove', onMove);
-        document.addEventListener('mouseup', onUp);
+        _rubberBandSelect(e, this.el.querySelector('.fw-area'), this.selection, () => this._updateStatus());
     }
 
     /* ---- CONTEXT MENUS ---- */
-    _ctxDesktop(e) {
+    _contextDesktop(e) {
         this.selection.clear();
         this.el.querySelectorAll('.file-item.selected').forEach(i => i.classList.remove('selected'));
         this._updateStatus();
@@ -2796,7 +2696,7 @@ class FolderWindow {
         showCtxMenu(e.clientX, e.clientY, items);
     }
 
-    _ctxIcon(e, node) {
+    _contextIcon(e, node) {
         if (!e.ctrlKey && !e.metaKey && !this.selection.has(node.id)) {
             this.selection.clear();
             this.el.querySelectorAll('.file-item.selected').forEach(i => i.classList.remove('selected'));
