@@ -159,7 +159,7 @@ const Home = {
             const sourceId = e.dataTransfer.getData('text/plain');
             if (!sourceId || sourceId === c.id) return;
             const grid2 = document.getElementById('container-grid');
-            const sourceCard = grid2.querySelector(`.container-card[data-id="${sourceId}"]`);
+            const sourceCard = grid2.querySelector(`.container-card[data-id="${CSS.escape(sourceId)}"]`);
             if (!sourceCard) return;
             const all = [...grid2.querySelectorAll('.container-card')];
             const fromIdx = all.indexOf(sourceCard);
@@ -714,6 +714,7 @@ async function doUnlock() {
         App.selection.clear();
         App.showView('desktop');
         if (typeof _applySettings === 'function') _applySettings(_getSettings(), true);
+        if (typeof _resetAutoLockTimer === 'function') _resetAutoLockTimer();
         Desktop.render();
         toast(`Container "${c.name}" unlocked`, 'success');
         // Save or clear session based on checkbox
@@ -818,6 +819,7 @@ async function _resumeSession(c, pw) {
         App.selection.clear();
         App.showView('desktop');
         if (typeof _applySettings === 'function') _applySettings(_getSettings(), true);
+        if (typeof _resetAutoLockTimer === 'function') _resetAutoLockTimer();
         Desktop.render();
         toast(`Session for "${c.name}" restored`, 'success');
     } catch (e) {

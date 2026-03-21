@@ -284,7 +284,7 @@ function _resetAutoLockTimer() {
         const min = parseInt(s.autoLock, 10);
         if (!isNaN(min) && min > 0) {
             _autoLockTimerId = setTimeout(() => {
-                App.closeContainer();
+                App.lockContainer();
             }, min * 60 * 1000);
         }
     }
@@ -1869,9 +1869,9 @@ class FolderWindow {
                 startLeft = parseInt(this.el.style.left) || 0,
                 startTop = parseInt(this.el.style.top) || 0;
             const onMove = mv => {
-                const area = document.getElementById('desktop-area');
-                const maxL = area.clientWidth - this.el.offsetWidth;
-                const maxT = area.clientHeight - this.el.offsetHeight;
+                const area = document.getElementById('desktop-area'),
+                    maxL = area.clientWidth - this.el.offsetWidth,
+                    maxT = area.clientHeight - this.el.offsetHeight;
                 this.el.style.left = Math.max(0, Math.min(maxL, startLeft + mv.clientX - startMouseX)) + 'px';
                 this.el.style.top = Math.max(0, Math.min(maxT, startTop + mv.clientY - startMouseY)) + 'px';
             };

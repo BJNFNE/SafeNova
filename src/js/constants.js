@@ -6,11 +6,11 @@
 const DB_NAME = 'SafeNovaEFS',
     DB_VERSION = 2,
     CONTAINER_LIMIT = 8 * 1024 * 1024 * 1024,   // 8 GB per container
-    DEVICE_LIMIT = 20 * 1024 * 1024 * 1024,  // 20 GB total device display limit
-    PBKDF2_ITER = 200_000,                   // legacy fallback
-    ARGON2_MEM = 19456,                     // 19 MB memory cost (OWASP minimum)
-    ARGON2_ITER = 2,                         // time cost (iterations)
-    ARGON2_PAR = 1,                         // parallelism
+    DEVICE_LIMIT = 20 * 1024 * 1024 * 1024,     // 20 GB total device display limit
+    PBKDF2_ITER = 200_000,                      // legacy fallback
+    ARGON2_MEM = 19456,                         // 19 MB memory cost (OWASP minimum)
+    ARGON2_ITER = 2,                            // time cost (iterations)
+    ARGON2_PAR = 1,                             // parallelism
     VERIFY_TEXT = 'SafeNovaEFS-VERIFY-OK',
     ICON_W = 84,
     ICON_H = 90;
@@ -166,7 +166,8 @@ const Icons = {
    LARGE (48×48) FILE TYPE ICONS — for desktop thumbnails
    ============================================================ */
 function getFolderSVG(color) {
-    const c = color || '#0078d4';
+    // Validate: only allow CSS hex colors to prevent SVG attribute injection
+    const c = /^#[0-9a-fA-F]{3,8}$/.test(color) ? color : '#0078d4';
     return `<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M4 14h17l5 7h18v21H4z" fill="${c}" opacity=".22" stroke="${c}" stroke-width="1.5" stroke-linejoin="round"/>
     <path d="M4 21h40v21H4z" fill="${c}" opacity=".35" stroke="${c}" stroke-width="1.5" stroke-linejoin="round"/>
@@ -217,9 +218,11 @@ function _slidePath() { return `<rect x="14" y="20" width="20" height="14" rx="1
 
 function _bigIconExt(color, extText) {
     const fs = extText.length <= 2 ? 14 : extText.length === 3 ? 12 : 10;
+    // HTML-escape the extension before inserting into SVG text content
+    const safe = extText.replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
     return `<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M10 4h18l10 10v30H10z" fill="${color}" opacity=".1" stroke="${color}" stroke-width="1.5" stroke-linejoin="round"/>
     <path d="M28 4v10h10" stroke="${color}" stroke-width="1.5" stroke-linecap="square"/>
-    <text x="24" y="35" text-anchor="middle" font-size="${fs}" font-weight="700" font-family="Cascadia Code,Consolas,monospace" fill="${color}" opacity=".9">${extText}</text>
+    <text x="24" y="35" text-anchor="middle" font-size="${fs}" font-weight="700" font-family="Cascadia Code,Consolas,monospace" fill="${color}" opacity=".9">${safe}</text>
   </svg>`;
 }

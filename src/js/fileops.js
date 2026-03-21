@@ -4,9 +4,10 @@
    FILENAME SANITIZATION
    ============================================================ */
 function sanitizeFilename(name) {
-    // Strip null bytes, path separators, and prevent . / .. as names
+    // Strip null bytes, path separators, HTML/XML special chars, and prevent . / .. as names
     const s = (name || 'unnamed')
         .replace(/[\x00-\x1f\\/]/g, '_')
+        .replace(/[<>&"']/g, '_')
         .trim();
     return /^\.{1,2}$/.test(s) || s === '' ? 'unnamed' : s;
 }
