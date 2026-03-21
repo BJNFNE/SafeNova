@@ -6,8 +6,8 @@
 async function saveVFS() {
     if (!App.key || !App.container) return;
     try {
-        const json = JSON.stringify(VFS.toObj());
-        const { iv, blob } = await Crypto.encrypt(App.key, json);
+        const json = JSON.stringify(VFS.toObj()),
+            { iv, blob } = await Crypto.encrypt(App.key, json);
         await DB.saveVFS(App.container.id, iv, blob);
         App.container.totalSize = VFS.totalSize();
         await DB.saveContainer(App.container);
@@ -37,7 +37,7 @@ function showCtxMenu(x, y, items) {
             li.addEventListener('mouseenter', () => showSubmenu(li, item.submenu));
             li.addEventListener('mouseleave', e => { if (!e.relatedTarget?.closest('#ctx-menu-sub')) hideSubmenu(); });
         } else if (item.disabled && item._tooltip) {
-            li.innerHTML = `<span class="ctx-item-icon">${item.icon || ''}</span><span>${escHtml(item.label)}</span>`;
+            li.innerHTML = `<span class="ctx-item-icon">${item.icon || ''}</span><span>${escHtml(item.label)}</span>${item._keyHint ? `<span class="ctx-item-key-hint">${item._keyHint}</span>` : ''}`;
             let _tip = null;
             li.addEventListener('mouseenter', () => {
                 _tip = document.createElement('div');
@@ -51,7 +51,7 @@ function showCtxMenu(x, y, items) {
             });
             li.addEventListener('mouseleave', () => { if (_tip) { _tip.remove(); _tip = null; } });
         } else {
-            li.innerHTML = `<span class="ctx-item-icon">${item.icon || ''}</span><span>${escHtml(item.label)}</span>`;
+            li.innerHTML = `<span class="ctx-item-icon">${item.icon || ''}</span><span>${escHtml(item.label)}</span>${item._keyHint ? `<span class="ctx-item-key-hint">${item._keyHint}</span>` : ''}`;
             li.addEventListener('click', () => { hideCtxMenu(); item.action?.(); });
             li.addEventListener('mouseenter', hideSubmenu);
         }
@@ -178,9 +178,9 @@ function _startHoverTooltip(el, node) {
     _tooltipTimer = setTimeout(() => {
         _tooltipEl = document.createElement('div');
         _tooltipEl.className = 'file-tooltip';
-        const mime = node.type === 'folder' ? 'Folder' : (node.mime || getMime(node.name));
-        const childCount = node.type === 'folder' ? VFS.children(node.id).length : null;
-        const folderSize = node.type === 'folder' && typeof _folderSize === 'function' ? _folderSize(node.id) : null;
+        const mime = node.type === 'folder' ? 'Folder' : (node.mime || getMime(node.name)),
+            childCount = node.type === 'folder' ? VFS.children(node.id).length : null,
+            folderSize = node.type === 'folder' && typeof _folderSize === 'function' ? _folderSize(node.id) : null;
         _tooltipEl.innerHTML =
             `<div class="ft-name">${escHtml(node.name)}</div>` +
             `<div class="ft-row">Path: ${escHtml(VFS.fullPath(node.id))}</div>` +
@@ -215,7 +215,7 @@ function _cancelHoverTooltip() {
 /* ============================================================
    SETTINGS
    ============================================================ */
-const SETTINGS_DEFAULTS = { iconSize: 'normal', gridDots: true, autoLock: '60', disableAnimations: false };
+const SETTINGS_DEFAULTS = { iconSize: 'normal', gridDots: true, autoLock: '60', disableAnimations: false, requireExportPassword: true };
 
 let _autoLockTimerId = null;
 
@@ -389,6 +389,12 @@ function openSettings() {
         _applySettings(ns);
         await _saveSettings(ns);
     };
+    // Bind require export password
+    document.querySelector('#settings-export-pw input').checked = s.requireExportPassword !== false;
+    document.querySelector('#settings-export-pw input').onchange = async function () {
+        const ns = { ..._getSettings(), requireExportPassword: this.checked };
+        await _saveSettings(ns);
+    };
     Overlay.show('modal-settings');
 }
 
@@ -430,8 +436,8 @@ function _renderStats() {
     // File type bar chart (top 6)
     const chart = document.getElementById('stats-bar-chart');
     chart.innerHTML = '';
-    const sorted = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]).slice(0, 6);
-    const maxCount = sorted.length ? sorted[0][1] : 1;
+    const sorted = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]).slice(0, 6),
+        maxCount = sorted.length ? sorted[0][1] : 1;
     sorted.forEach(([ext, count], i) => {
         const pct = Math.round(count / totalFiles * 100);
         const row = document.createElement('div'); row.className = 'stats-bar-row';
@@ -457,8 +463,8 @@ function _renderStats() {
    occupied = Map<"cx_cy", id>  (cells already taken)
    ============================================================ */
 function _snapFreeCell(rawX, rawY, occupied) {
-    const cx0 = Math.max(0, Math.round((rawX - 8) / GRID_X));
-    const cy0 = Math.max(0, Math.round((rawY - 8) / GRID_Y));
+    const cx0 = Math.max(0, Math.round((rawX - 8) / GRID_X)),
+        cy0 = Math.max(0, Math.round((rawY - 8) / GRID_Y));
     for (let r = 0; r <= 80; r++) {
         for (let dy = -r; dy <= r; dy++) {
             for (let dx = -r; dx <= r; dx++) {
@@ -576,8 +582,8 @@ function _initAreaTouchRubberBand(area, owner) {
 
     area.addEventListener('touchmove', e => {
         if (e.touches.length !== 1) return;
-        const t = e.touches[0];
-        const dx = t.clientX - _rbSX, dy = t.clientY - _rbSY;
+        const t = e.touches[0],
+            dx = t.clientX - _rbSX, dy = t.clientY - _rbSY;
         if (!_rbMoved && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
             _rbMoved = true;
             if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
@@ -604,8 +610,8 @@ function _initAreaTouchRubberBand(area, owner) {
             _rbBand.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
             const bx2 = x + w, by2 = y + h;
             area.querySelectorAll(':scope > .file-item').forEach(item => {
-                const ix = parseInt(item.style.left), iy = parseInt(item.style.top);
-                const hit = ix < bx2 && (ix + ICON_W) > x && iy < by2 && (iy + ICON_H) > y;
+                const ix = parseInt(item.style.left), iy = parseInt(item.style.top),
+                    hit = ix < bx2 && (ix + ICON_W) > x && iy < by2 && (iy + ICON_H) > y;
                 if (hit) { owner.selection.add(item.dataset.id); item.classList.add('selected'); }
                 else { owner.selection.delete(item.dataset.id); item.classList.remove('selected'); }
             });
@@ -638,8 +644,8 @@ function _rubberBandSelect(e, area, sel, onUpdate) {
         band.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
         const bx1 = x, by1 = y, bx2 = x + w, by2 = y + h;
         area.querySelectorAll(':scope > .file-item').forEach(item => {
-            const ix = parseInt(item.style.left), iy = parseInt(item.style.top);
-            const hit = ix < bx2 && (ix + ICON_W) > bx1 && iy < by2 && (iy + ICON_H) > by1;
+            const ix = parseInt(item.style.left), iy = parseInt(item.style.top),
+                hit = ix < bx2 && (ix + ICON_W) > bx1 && iy < by2 && (iy + ICON_H) > by1;
             if (hit) { sel.add(item.dataset.id); item.classList.add('selected'); }
             else if (!e.ctrlKey && !e.metaKey) { sel.delete(item.dataset.id); item.classList.remove('selected'); }
         });
@@ -665,8 +671,8 @@ function _startIconDrag(e, node, el, srcCtx) {
     el.classList.add('selected');
     srcCtx.updateUI();
 
-    const isDesktop = srcCtx.winEl === null;
-    const srcArea = srcCtx.area;
+    const isDesktop = srcCtx.winEl === null,
+        srcArea = srcCtx.area;
 
     // Elevate z-index for desktop items during drag
     if (isDesktop) {
@@ -717,14 +723,14 @@ function _startIconDrag(e, node, el, srcCtx) {
             targetArea.appendChild(p); previewArr.push(p);
         }
         while (previewArr.length > selIds.length) previewArr.pop().remove();
-        const snapOcc = new Map(occMap);
-        const mainSp = startPosMap[node.id];
+        const snapOcc = new Map(occMap),
+            mainSp = startPosMap[node.id];
         selIds.forEach((id, i) => {
-            const sp = startPosMap[id];
-            const offX = sp && mainSp ? sp.x - mainSp.x : 0;
-            const offY = sp && mainSp ? sp.y - mainSp.y : 0;
-            const snapped = _snapFreeCell(dropX + offX, dropY + offY, snapOcc);
-            const cx = Math.round((snapped.x - 8) / GRID_X), cy = Math.round((snapped.y - 8) / GRID_Y);
+            const sp = startPosMap[id],
+                offX = sp && mainSp ? sp.x - mainSp.x : 0,
+                offY = sp && mainSp ? sp.y - mainSp.y : 0,
+                snapped = _snapFreeCell(dropX + offX, dropY + offY, snapOcc),
+                cx = Math.round((snapped.x - 8) / GRID_X), cy = Math.round((snapped.y - 8) / GRID_Y);
             snapOcc.set(`${cx}_${cy}`, id);
             previewArr[i].style.left    = snapped.x + 'px';
             previewArr[i].style.top     = snapped.y + 'px';
@@ -734,8 +740,8 @@ function _startIconDrag(e, node, el, srcCtx) {
 
     function _snapBackSrc() {
         srcCtx.selection.forEach(id => {
-            const item = srcArea.querySelector(`.file-item[data-id="${id}"]`);
-            const sp   = startPosMap[id];
+            const item = srcArea.querySelector(`.file-item[data-id="${id}"]`),
+                sp   = startPosMap[id];
             if (item && sp) {
                 item.style.transition = 'left 0.12s ease, top 0.12s ease';
                 item.style.left = sp.x + 'px'; item.style.top = sp.y + 'px';
@@ -757,8 +763,8 @@ function _startIconDrag(e, node, el, srcCtx) {
             return false;
         }
         // pre-check: duplicates
-        const existing = new Set(VFS.children(destFid).map(n => n.name.toLowerCase()));
-        const conflicts = [];
+        const existing = new Set(VFS.children(destFid).map(n => n.name.toLowerCase())),
+            conflicts = [];
         srcCtx.selection.forEach(id => {
             if (id === destFid) return;
             const n = VFS.node(id); if (!n) return;
@@ -770,8 +776,8 @@ function _startIconDrag(e, node, el, srcCtx) {
             return false;
         }
         // perform move
-        const movedIds  = [];
-        const occupied  = new Map();
+        const movedIds  = [],
+            occupied  = new Map();
         VFS.children(destFid).forEach(n => {
             const p = VFS.getPos(destFid, n.id);
             if (p) occupied.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
@@ -785,10 +791,10 @@ function _startIconDrag(e, node, el, srcCtx) {
             if (result === 'cycle')     { toast(`Cannot move "${n.name}" into itself or a subfolder`, 'error'); continue; }
             if (result !== 'ok')        { continue; }
             if (dropX !== null) {
-                const sp   = startPosMap[id];
-                const offX = sp && mainSp ? sp.x - mainSp.x : 0;
-                const offY = sp && mainSp ? sp.y - mainSp.y : 0;
-                const sn   = _snapFreeCell(dropX + offX, dropY + offY, occupied);
+                const sp   = startPosMap[id],
+                    offX = sp && mainSp ? sp.x - mainSp.x : 0,
+                    offY = sp && mainSp ? sp.y - mainSp.y : 0,
+                    sn   = _snapFreeCell(dropX + offX, dropY + offY, occupied);
                 VFS.setPos(destFid, id, sn.x, sn.y);
                 occupied.set(`${Math.round((sn.x - 8) / GRID_X)}_${Math.round((sn.y - 8) / GRID_Y)}`, id);
             }
@@ -806,12 +812,12 @@ function _startIconDrag(e, node, el, srcCtx) {
         }
         if (!moved) return;
 
-        const mainSp = startPosMap[node.id];
-        const curAreaRect = srcArea.getBoundingClientRect();
-        const targetMainX = mv.clientX - curAreaRect.left + srcArea.scrollLeft - clickOffX;
-        const targetMainY = mv.clientY - curAreaRect.top  + srcArea.scrollTop  - clickOffY;
-        const dx = targetMainX - mainSp.x;
-        const dy = targetMainY - mainSp.y;
+        const mainSp = startPosMap[node.id],
+            curAreaRect = srcArea.getBoundingClientRect(),
+            targetMainX = mv.clientX - curAreaRect.left + srcArea.scrollLeft - clickOffX,
+            targetMainY = mv.clientY - curAreaRect.top  + srcArea.scrollTop  - clickOffY,
+            dx = targetMainX - mainSp.x,
+            dy = targetMainY - mainSp.y;
 
         // ---- FW-specific: escape / re-enter --------------------------------
         if (!isDesktop) {
@@ -837,8 +843,8 @@ function _startIconDrag(e, node, el, srcCtx) {
                     const orig = srcArea.querySelector(`.file-item[data-id="${id}"]`);
                     if (orig) orig.style.visibility = 'hidden';
                 });
-                const deskArea = document.getElementById('desktop-area');
-                const selIds = [...srcCtx.selection].sort((a, b) => a === node.id ? -1 : b === node.id ? 1 : 0);
+                const deskArea = document.getElementById('desktop-area'),
+                    selIds = [...srcCtx.selection].sort((a, b) => a === node.id ? -1 : b === node.id ? 1 : 0);
                 selIds.forEach(id => {
                     const n = VFS.node(id); if (!n) return;
                     const g = _buildIconEl(n, { x: 0, y: 0 });
@@ -854,19 +860,19 @@ function _startIconDrag(e, node, el, srcCtx) {
         // ---- position items / ghosts ---------------------------------------
         if (!escaped) {
             srcCtx.selection.forEach(id => {
-                const it = srcArea.querySelector(`.file-item[data-id="${id}"]`);
-                const sp = startPosMap[id];
+                const it = srcArea.querySelector(`.file-item[data-id="${id}"]`),
+                    sp = startPosMap[id];
                 if (it && sp) { it.style.left = (sp.x + dx) + 'px'; it.style.top = (sp.y + dy) + 'px'; }
             });
         } else {
-            const deskArea = document.getElementById('desktop-area');
-            const deskRect = deskArea.getBoundingClientRect();
-            const baseX = mv.clientX - deskRect.left + deskArea.scrollLeft - clickOffX;
-            const baseY = mv.clientY - deskRect.top  + deskArea.scrollTop  - clickOffY;
+            const deskArea = document.getElementById('desktop-area'),
+                deskRect = deskArea.getBoundingClientRect(),
+                baseX = mv.clientX - deskRect.left + deskArea.scrollLeft - clickOffX,
+                baseY = mv.clientY - deskRect.top  + deskArea.scrollTop  - clickOffY;
             ghostEls.forEach(g => {
-                const sp = startPosMap[g.dataset.ghostFor];
-                const offX = sp && mainSp ? sp.x - mainSp.x : 0;
-                const offY = sp && mainSp ? sp.y - mainSp.y : 0;
+                const sp = startPosMap[g.dataset.ghostFor],
+                    offX = sp && mainSp ? sp.x - mainSp.x : 0,
+                    offY = sp && mainSp ? sp.y - mainSp.y : 0;
                 g.style.left = (baseX + offX) + 'px';
                 g.style.top  = (baseY + offY) + 'px';
             });
@@ -896,9 +902,9 @@ function _startIconDrag(e, node, el, srcCtx) {
         }
 
         // ---- hovered FW (excluding source window) -------------------------
-        const fwElt  = !hoverFolder ? target?.closest('.folder-window') : null;
-        const curWin = fwElt ? (typeof WinManager !== 'undefined' ? WinManager._wins.find(w => w.el === fwElt) : null) : null;
-        const effectiveHoverWin = (curWin && curWin.el !== srcCtx.winEl) ? curWin : null;
+        const fwElt  = !hoverFolder ? target?.closest('.folder-window') : null,
+            curWin = fwElt ? (typeof WinManager !== 'undefined' ? WinManager._wins.find(w => w.el === fwElt) : null) : null,
+            effectiveHoverWin = (curWin && curWin.el !== srcCtx.winEl) ? curWin : null;
         if (effectiveHoverWin !== hoverWin) {
             winSnapPreviewEls.forEach(p => p.remove()); winSnapPreviewEls = [];
             hoverWin = effectiveHoverWin;
@@ -914,11 +920,11 @@ function _startIconDrag(e, node, el, srcCtx) {
         } else if (hoverWin) {
             snapPreviewEls.forEach(p => p.style.display = 'none');
             deskSnapPreviewEls.forEach(p => p.style.display = 'none');
-            const winArea = hoverWin.el.querySelector('.fw-area');
-            const wRect   = winArea.getBoundingClientRect();
-            const dropX   = mv.clientX - wRect.left + winArea.scrollLeft - clickOffX;
-            const dropY   = mv.clientY - wRect.top  + winArea.scrollTop  - clickOffY;
-            const winOcc  = new Map();
+            const winArea = hoverWin.el.querySelector('.fw-area'),
+                wRect   = winArea.getBoundingClientRect(),
+                dropX   = mv.clientX - wRect.left + winArea.scrollLeft - clickOffX,
+                dropY   = mv.clientY - wRect.top  + winArea.scrollTop  - clickOffY,
+                winOcc  = new Map();
             VFS.children(hoverWin.folderId).forEach(n => {
                 const p = VFS.getPos(hoverWin.folderId, n.id);
                 if (p) winOcc.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
@@ -928,11 +934,11 @@ function _startIconDrag(e, node, el, srcCtx) {
             // on desktop (FW items that escaped)
             snapPreviewEls.forEach(p => p.style.display = 'none');
             winSnapPreviewEls.forEach(p => p.style.display = 'none');
-            const deskArea = document.getElementById('desktop-area');
-            const dRect    = deskArea.getBoundingClientRect();
-            const dropX    = mv.clientX - dRect.left + deskArea.scrollLeft - clickOffX;
-            const dropY    = mv.clientY - dRect.top  + deskArea.scrollTop  - clickOffY;
-            const deskOcc  = new Map();
+            const deskArea = document.getElementById('desktop-area'),
+                dRect    = deskArea.getBoundingClientRect(),
+                dropX    = mv.clientX - dRect.left + deskArea.scrollLeft - clickOffX,
+                dropY    = mv.clientY - dRect.top  + deskArea.scrollTop  - clickOffY,
+                deskOcc  = new Map();
             VFS.children(Desktop._desktopFolder).forEach(n => {
                 const p = VFS.getPos(Desktop._desktopFolder, n.id);
                 if (p) deskOcc.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
@@ -984,10 +990,10 @@ function _startIconDrag(e, node, el, srcCtx) {
                 let cur = w.folderId;
                 while (cur && cur !== 'root') { openFolderIds.add(cur); cur = (VFS.node(cur) || {}).parentId; }
             });
-            const dropT  = document.elementFromPoint(lastX, lastY);
-            const tfw    = dropT?.closest('.folder-window');
-            const tw     = tfw ? WinManager._wins.find(w => w.el === tfw) : null;
-            const tFid   = hoverFolder || (tw ? tw.folderId : null);
+            const dropT  = document.elementFromPoint(lastX, lastY),
+                tfw    = dropT?.closest('.folder-window'),
+                tw     = tfw ? WinManager._wins.find(w => w.el === tfw) : null,
+                tFid   = hoverFolder || (tw ? tw.folderId : null);
             const blocked = Array.from(srcCtx.selection).find(id => {
                 const n = VFS.node(id);
                 if (!n || n.type !== 'folder' || !openFolderIds.has(id)) return false;
@@ -1020,10 +1026,10 @@ function _startIconDrag(e, node, el, srcCtx) {
         }
 
         // Determine actual drop zone
-        const dropTarget = document.elementFromPoint(lastX, lastY);
-        const tFwEl  = dropTarget?.closest('.folder-window');
-        const tWin   = tFwEl ? (typeof WinManager !== 'undefined' ? WinManager._wins.find(w => w.el === tFwEl) : null) : null;
-        const actualHoverWin = (tWin && tWin.el !== srcCtx.winEl) ? tWin : null;
+        const dropTarget = document.elementFromPoint(lastX, lastY),
+            tFwEl  = dropTarget?.closest('.folder-window'),
+            tWin   = tFwEl ? (typeof WinManager !== 'undefined' ? WinManager._wins.find(w => w.el === tFwEl) : null) : null,
+            actualHoverWin = (tWin && tWin.el !== srcCtx.winEl) ? tWin : null;
 
         // ---- Case 2: dropped onto a folder icon ----------------------------
         if (hoverFolder) {
@@ -1058,11 +1064,11 @@ function _startIconDrag(e, node, el, srcCtx) {
         if (actualHoverWin || (!isDesktop && escaped && !hoverFolder)) {
             const targetWin = actualHoverWin;
             if (targetWin) {
-                const tArea   = targetWin.el.querySelector('.fw-area');
-                const tRect   = tArea.getBoundingClientRect();
-                const dropPosX = lastX - tRect.left + tArea.scrollLeft - clickOffX;
-                const dropPosY = lastY - tRect.top  + tArea.scrollTop  - clickOffY;
-                const movedIds = await _dropIntoFolder(targetWin.folderId, dropPosX, dropPosY);
+                const tArea   = targetWin.el.querySelector('.fw-area'),
+                    tRect   = tArea.getBoundingClientRect(),
+                    dropPosX = lastX - tRect.left + tArea.scrollLeft - clickOffX,
+                    dropPosY = lastY - tRect.top  + tArea.scrollTop  - clickOffY,
+                    movedIds = await _dropIntoFolder(targetWin.folderId, dropPosX, dropPosY);
                 if (movedIds === false) {
                     if (!isDesktop) srcCtx.selection.forEach(id => {
                         const orig = srcArea.querySelector(`.file-item[data-id="${id}"]`);
@@ -1093,27 +1099,27 @@ function _startIconDrag(e, node, el, srcCtx) {
 
         // ---- Case 4a: FW item dropped onto desktop ------------------------
         if (!isDesktop && escaped) {
-            const deskArea = document.getElementById('desktop-area');
-            const dRect    = deskArea.getBoundingClientRect();
-            const dropPosX = lastX - dRect.left + deskArea.scrollLeft - clickOffX;
-            const dropPosY = lastY - dRect.top  + deskArea.scrollTop  - clickOffY;
-            const deskFid  = Desktop._desktopFolder;
-            const occupied = new Map();
+            const deskArea = document.getElementById('desktop-area'),
+                dRect    = deskArea.getBoundingClientRect(),
+                dropPosX = lastX - dRect.left + deskArea.scrollLeft - clickOffX,
+                dropPosY = lastY - dRect.top  + deskArea.scrollTop  - clickOffY,
+                deskFid  = Desktop._desktopFolder,
+                occupied = new Map();
             VFS.children(deskFid).forEach(n => {
                 const p = VFS.getPos(deskFid, n.id);
                 if (p) occupied.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
             });
-            const mainSp = startPosMap[node.id];
-            const movedIds = [];
+            const mainSp = startPosMap[node.id],
+                movedIds = [];
             for (const id of srcCtx.selection) {
                 const n = VFS.node(id); if (!n) continue;
                 const result = VFS.move(id, deskFid);
                 if (result === 'duplicate') { toast(`"${n.name}" already exists on desktop`, 'error'); continue; }
                 if (result === 'cycle')     { toast(`Cannot move "${n.name}" into itself`, 'error'); continue; }
-                const sp   = startPosMap[id];
-                const offX = sp && mainSp ? sp.x - mainSp.x : 0;
-                const offY = sp && mainSp ? sp.y - mainSp.y : 0;
-                const sn   = _snapFreeCell(dropPosX + offX, dropPosY + offY, occupied);
+                const sp   = startPosMap[id],
+                    offX = sp && mainSp ? sp.x - mainSp.x : 0,
+                    offY = sp && mainSp ? sp.y - mainSp.y : 0,
+                    sn   = _snapFreeCell(dropPosX + offX, dropPosY + offY, occupied);
                 VFS.setPos(deskFid, id, sn.x, sn.y);
                 occupied.set(`${Math.round((sn.x - 8) / GRID_X)}_${Math.round((sn.y - 8) / GRID_Y)}`, id);
                 movedIds.push(id);
@@ -1162,9 +1168,9 @@ function _startIconDrag(e, node, el, srcCtx) {
         srcCtx.selection.forEach(id => {
             const item = srcArea.querySelector(`.file-item[data-id="${id}"]`);
             if (!item) return;
-            const rawX    = parseInt(item.style.left), rawY = parseInt(item.style.top);
-            const snapped = _snapFreeCell(rawX, rawY, occupied);
-            const cx = Math.round((snapped.x - 8) / GRID_X), cy = Math.round((snapped.y - 8) / GRID_Y);
+            const rawX    = parseInt(item.style.left), rawY = parseInt(item.style.top),
+                snapped = _snapFreeCell(rawX, rawY, occupied),
+                cx = Math.round((snapped.x - 8) / GRID_X), cy = Math.round((snapped.y - 8) / GRID_Y);
             occupied.set(`${cx}_${cy}`, id);
             item.style.transition = 'left 0.12s ease, top 0.12s ease';
             item.style.left = snapped.x + 'px'; item.style.top = snapped.y + 'px';
@@ -1206,8 +1212,8 @@ const Desktop = {
     },
 
     _renderBreadcrumb() {
-        const bc = document.getElementById('breadcrumb');
-        const crumbs = VFS.breadcrumb(this._desktopFolder);
+        const bc = document.getElementById('breadcrumb'),
+            crumbs = VFS.breadcrumb(this._desktopFolder);
         bc.innerHTML = '';
         crumbs.forEach((n, i) => {
             const span = document.createElement('span');
@@ -1264,9 +1270,9 @@ const Desktop = {
         App.folder = this._desktopFolder;
         App.selection = this._sel;
 
-        const area = document.getElementById('desktop-area');
-        const nodes = VFS.children(this._desktopFolder);
-        const nodeMap = new Map(nodes.map(n => [n.id, n]));
+        const area = document.getElementById('desktop-area'),
+            nodes = VFS.children(this._desktopFolder),
+            nodeMap = new Map(nodes.map(n => [n.id, n]));
 
         // Remove elements for nodes no longer in this folder
         area.querySelectorAll(':scope > .file-item').forEach(el => {
@@ -1333,12 +1339,12 @@ const Desktop = {
 
         area.addEventListener('touchstart', e => {
             if (e.touches.length !== 1) return;
-            const t = e.touches[0];
-            const iconEl = t.target?.closest('#desktop-area > .file-item[data-id]');
+            const t = e.touches[0],
+                iconEl = t.target?.closest('#desktop-area > .file-item[data-id]');
             if (!iconEl) return;
 
-            const nodeId = iconEl.dataset.id;
-            const node = VFS.node(nodeId);
+            const nodeId = iconEl.dataset.id,
+                node = VFS.node(nodeId);
             if (!node) return;
 
             _tdMoved = false; _tdActive = false;
@@ -1378,22 +1384,22 @@ const Desktop = {
 
         area.addEventListener('touchmove', e => {
             if (e.touches.length !== 1) return;
-            const t = e.touches[0];
-            const dx = t.clientX - _tdStartX, dy = t.clientY - _tdStartY;
+            const t = e.touches[0],
+                dx = t.clientX - _tdStartX, dy = t.clientY - _tdStartY;
             if (Math.abs(dx) + Math.abs(dy) > 5) _tdMoved = true;
             // BUGFIX: prevent the desktop area from scrolling during the 400ms hold and during drag.
             if ((_tdTimer && !_tdMoved) || _tdActive) { if (e.cancelable) e.preventDefault(); }
             if (!_tdActive || !_touchDragNode) return;
 
-            const areaRect = area.getBoundingClientRect();
-            const mainSp = _tdStartPos[_touchDragNode.id];
-            const rawX = t.clientX - areaRect.left + area.scrollLeft - _tdOffX;
-            const rawY = t.clientY - areaRect.top + area.scrollTop - _tdOffY;
-            const ddx = rawX - mainSp.x, ddy = rawY - mainSp.y;
+            const areaRect = area.getBoundingClientRect(),
+                mainSp = _tdStartPos[_touchDragNode.id],
+                rawX = t.clientX - areaRect.left + area.scrollLeft - _tdOffX,
+                rawY = t.clientY - areaRect.top + area.scrollTop - _tdOffY,
+                ddx = rawX - mainSp.x, ddy = rawY - mainSp.y;
 
             this._sel.forEach(id => {
-                const el = area.querySelector(`:scope > .file-item[data-id="${id}"]`);
-                const sp = _tdStartPos[id];
+                const el = area.querySelector(`:scope > .file-item[data-id="${id}"]`),
+                    sp = _tdStartPos[id];
                 if (el && sp) { el.style.left = (sp.x + ddx) + 'px'; el.style.top = (sp.y + ddy) + 'px'; }
             });
 
@@ -1433,9 +1439,9 @@ const Desktop = {
                 if (cycled.length) {
                     _snapBack(_tdStartPos); toast(`Cannot move "${VFS.node(cycled[0])?.name}" into itself`, 'error'); return;
                 }
-                const tgtChildren = VFS.children(_tdHoverFolder);
-                const existing = new Set(tgtChildren.map(n => n.name.toLowerCase()));
-                const dupe = [...this._sel].find(id => id !== _tdHoverFolder && existing.has(VFS.node(id)?.name?.toLowerCase()));
+                const tgtChildren = VFS.children(_tdHoverFolder),
+                    existing = new Set(tgtChildren.map(n => n.name.toLowerCase())),
+                    dupe = [...this._sel].find(id => id !== _tdHoverFolder && existing.has(VFS.node(id)?.name?.toLowerCase()));
                 if (dupe) {
                     _snapBack(_tdStartPos); toast(`"${VFS.node(dupe)?.name}" already exists in target folder`, 'error'); return;
                 }
@@ -1456,8 +1462,8 @@ const Desktop = {
                 this._sel.forEach(id => {
                     const el = area.querySelector(`:scope > .file-item[data-id="${id}"]`);
                     if (!el) return;
-                    const snapped = _snapFreeCell(parseInt(el.style.left), parseInt(el.style.top), occupied);
-                    const cx = Math.round((snapped.x - 8) / GRID_X), cy = Math.round((snapped.y - 8) / GRID_Y);
+                    const snapped = _snapFreeCell(parseInt(el.style.left), parseInt(el.style.top), occupied),
+                        cx = Math.round((snapped.x - 8) / GRID_X), cy = Math.round((snapped.y - 8) / GRID_Y);
                     occupied.set(`${cx}_${cy}`, id);
                     el.style.transition = 'left .12s ease,top .12s ease';
                     el.style.left = snapped.x + 'px'; el.style.top = snapped.y + 'px';
@@ -1656,8 +1662,8 @@ const Desktop = {
             e.preventDefault();
             const overFW = !!e.target.closest('.folder-window');
             if (!overFW) {
-                const folderEl = e.target?.closest?.('#desktop-area > .file-item[data-id]');
-                const newHover = folderEl && VFS.node(folderEl.dataset.id)?.type === 'folder' ? folderEl.dataset.id : null;
+                const folderEl = e.target?.closest?.('#desktop-area > .file-item[data-id]'),
+                    newHover = folderEl && VFS.node(folderEl.dataset.id)?.type === 'folder' ? folderEl.dataset.id : null;
                 if (newHover !== _deskDndHoverFolder) {
                     if (_deskDndHoverFolder) document.querySelector(`#desktop-area > .file-item[data-id="${_deskDndHoverFolder}"]`)?.classList.remove('drag-target');
                     _deskDndHoverFolder = newHover;
@@ -1786,8 +1792,8 @@ class FolderWindow {
 
     /* ---- DOM BUILD ---- */
     _build() {
-        const node = VFS.node(this.folderId);
-        const el = document.createElement('div');
+        const node = VFS.node(this.folderId),
+            el = document.createElement('div');
         el.className = 'folder-window';
         el.style.zIndex = WinManager.nextZ();
 
@@ -1913,8 +1919,8 @@ class FolderWindow {
         let _fwDndHoverFolder = null;
         area.addEventListener('dragover', e => {
             e.preventDefault();
-            const folderEl = e.target?.closest?.('.file-item[data-id]');
-            const newHover = folderEl && VFS.node(folderEl.dataset.id)?.type === 'folder' ? folderEl.dataset.id : null;
+            const folderEl = e.target?.closest?.('.file-item[data-id]'),
+                newHover = folderEl && VFS.node(folderEl.dataset.id)?.type === 'folder' ? folderEl.dataset.id : null;
             if (newHover !== _fwDndHoverFolder) {
                 if (_fwDndHoverFolder) area.querySelector(`.file-item[data-id="${_fwDndHoverFolder}"]`)?.classList.remove('drag-target');
                 _fwDndHoverFolder = newHover;
@@ -2005,8 +2011,8 @@ class FolderWindow {
         if (_folderIconEl) _folderIconEl.innerHTML = getFolderSVG(node.color);
 
         // Update breadcrumb inside toolbar
-        const bcId = `fw-bc-${this.el.querySelector('.fw-breadcrumb').id.replace('fw-bc-', '')}`;
-        const bc = this.el.querySelector('.fw-breadcrumb');
+        const bcId = `fw-bc-${this.el.querySelector('.fw-breadcrumb').id.replace('fw-bc-', '')}`,
+            bc = this.el.querySelector('.fw-breadcrumb');
         bc.innerHTML = '';
         VFS.breadcrumb(this.folderId).forEach((n, i, arr) => {
             if (i === 0) return; // skip root
@@ -2019,8 +2025,8 @@ class FolderWindow {
         });
 
         // Render icons — incremental when same folder to avoid flash, full rebuild on navigation
-        const area = this.el.querySelector('.fw-area');
-        const folderChanged = this._renderedFolderId !== this.folderId;
+        const area = this.el.querySelector('.fw-area'),
+            folderChanged = this._renderedFolderId !== this.folderId;
         this._renderedFolderId = this.folderId;
 
         const items = VFS.children(this.folderId);
@@ -2133,12 +2139,12 @@ class FolderWindow {
 
         area.addEventListener('touchstart', e => {
             if (e.touches.length !== 1) return;
-            const t = e.touches[0];
-            const iconEl = t.target?.closest('.file-item[data-id]');
+            const t = e.touches[0],
+                iconEl = t.target?.closest('.file-item[data-id]');
             if (!iconEl || !area.contains(iconEl)) return;
 
-            const nodeId = iconEl.dataset.id;
-            const node = VFS.node(nodeId);
+            const nodeId = iconEl.dataset.id,
+                node = VFS.node(nodeId);
             if (!node) return;
 
             _tdMoved = false; _tdActive = false;
@@ -2181,15 +2187,15 @@ class FolderWindow {
             if ((_tdTimer && !_tdMoved) || _tdActive) { if (e.cancelable) e.preventDefault(); }
             if (!_tdActive || !_tdNode) return;
 
-            const aR = area.getBoundingClientRect();
-            const mainSp = _tdStartPos[_tdNode.id];
-            const rawX = t.clientX - aR.left + area.scrollLeft - _tdOffX;
-            const rawY = t.clientY - aR.top + area.scrollTop - _tdOffY;
-            const ddx = rawX - mainSp.x, ddy = rawY - mainSp.y;
+            const aR = area.getBoundingClientRect(),
+                mainSp = _tdStartPos[_tdNode.id],
+                rawX = t.clientX - aR.left + area.scrollLeft - _tdOffX,
+                rawY = t.clientY - aR.top + area.scrollTop - _tdOffY,
+                ddx = rawX - mainSp.x, ddy = rawY - mainSp.y;
 
             this.selection.forEach(id => {
-                const el = area.querySelector(`.file-item[data-id="${id}"]`);
-                const sp = _tdStartPos[id];
+                const el = area.querySelector(`.file-item[data-id="${id}"]`),
+                    sp = _tdStartPos[id];
                 if (el && sp) { el.style.left = (sp.x + ddx) + 'px'; el.style.top = (sp.y + ddy) + 'px'; }
             });
 
@@ -2245,8 +2251,8 @@ class FolderWindow {
                 this.selection.forEach(id => {
                     const el = area.querySelector(`.file-item[data-id="${id}"]`);
                     if (!el) return;
-                    const snapped = _snapFreeCell(parseInt(el.style.left), parseInt(el.style.top), occupied);
-                    const cx = Math.round((snapped.x - 8) / GRID_X), cy = Math.round((snapped.y - 8) / GRID_Y);
+                    const snapped = _snapFreeCell(parseInt(el.style.left), parseInt(el.style.top), occupied),
+                        cx = Math.round((snapped.x - 8) / GRID_X), cy = Math.round((snapped.y - 8) / GRID_Y);
                     occupied.set(`${cx}_${cy}`, id);
                     el.style.transition = 'left .12s ease,top .12s ease';
                     el.style.left = snapped.x + 'px'; el.style.top = snapped.y + 'px';
@@ -2386,8 +2392,8 @@ class FolderWindow {
 
     /* ---- STATUS BAR & KEYBOARD ---- */
     _updateStatus() {
-        const count = VFS.children(this.folderId).length;
-        const sel = this.selection.size;
+        const count = VFS.children(this.folderId).length,
+            sel = this.selection.size;
         this.el.querySelector('.fw-status-text').textContent =
             sel > 0 ? `${sel} of ${count} selected` : `${count} item${count !== 1 ? 's' : ''}`;
     }

@@ -2086,7 +2086,6 @@ input[type="password"]::-ms-clear {
 .fw-bc-item.current {
     color: var(--accent);
     cursor: default;
-    font-weight: 600;
 }
 .fw-bc-item.current:hover {
     background: transparent;
@@ -2132,6 +2131,26 @@ input[type="password"]::-ms-clear {
     padding-left: 8px;
     font-size: 12px;
     opacity: 0.6;
+}
+
+/* ============================================================
+   CONTEXT MENU KEY HINT (right-side auth indicator)
+   ============================================================ */
+.ctx-item-key-hint {
+    margin-left: auto;
+    padding-left: 8px;
+    opacity: 0.72;
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+.ctx-item-key-hint svg {
+    width: 13px;
+    height: 13px;
+}
+.ctx-item-key-hint svg circle,
+.ctx-item-key-hint svg path {
+    stroke-width: 2;
 }
 
 /* ============================================================

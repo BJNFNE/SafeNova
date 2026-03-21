@@ -1182,7 +1182,7 @@ function _askExportPassword(c) {
     });
 }
 
-async function exportContainerFile(c) {
+async function exportContainerFile(c, requirePassword = true) {
     showLoading('Exporting container…');
     try {
         const vfsRec = await DB.getVFS(c.id),
@@ -1209,11 +1209,21 @@ async function exportContainerFile(c) {
         // Encrypt file manifest with the container key
         const manifestJson = JSON.stringify(fileManifest);
         let key = (App.container?.id === c.id) ? App.key : null;
+        // If the extra-confirmation setting is off, silently try the saved session
+        if (!requirePassword && !key) {
+            const rawKeyBytes = await loadSession(c.id);
+            if (rawKeyBytes) {
+                try {
+                    const sk = await Crypto.importRawKey(rawKeyBytes);
+                    if (await Crypto.checkVerification(sk, c.verIv, c.verBlob)) key = sk;
+                } catch { /* corrupt session — will prompt below */ }
+            }
+        }
         if (!key) {
             hideLoading();
             key = await _askExportPassword(c);
             if (!key) return;
-            showLoading('Exporting container\u2026');
+            showLoading('Exporting container…');
         }
         const encManifest = await Crypto.encrypt(key, manifestJson),
             encManifestIv = new Uint8Array(encManifest.iv),

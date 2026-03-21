@@ -25,6 +25,7 @@ Key properties:
 -   **Hardware key support** — optionally use a WebAuthn passkey to strengthen the container salt
 -   **Session memory** — optionally remember your session per tab or per browser
 -   **Container import / export** — portable `.safenova` container files
+-   **Export password guard** — configurable setting (on by default) to require password confirmation before exporting; when disabled, active-session key is used directly
 -   **Sort & arrange** — sort icons by name, date, size, or type; drag to custom positions
 -   **Keyboard shortcuts** — `Delete`, `F2`, `Ctrl+A`, `Ctrl+C/X/V`, `Ctrl+S` (save in editor), `Escape`
 -   **Mobile-friendly** — touch drag, rubber-band selection, single/double-tap gestures

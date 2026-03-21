@@ -191,11 +191,14 @@ const Home = {
 function showContainerMenu(e, c) {
     const hasSess = hasSession(c.id),
         isOpen = App.container && App.container.id === c.id,
+        reqExpPw = c.settings?.requireExportPassword !== false,
         items = [];
 
     // Open — resume if session exists, otherwise go to unlock view
     items.push({
-        label: 'Open', icon: Icons.unlock, action: async () => {
+        label: 'Open', icon: Icons.unlock,
+        _keyHint: !hasSess ? Icons.key : null,
+        action: async () => {
             const savedPw = await loadSession(c.id);
             if (savedPw) _resumeSession(c, savedPw); else openUnlockView(c);
         }
@@ -209,7 +212,9 @@ function showContainerMenu(e, c) {
     // Change Password — always visible, disabled when session active or container open
     const cpDisabled = hasSess || isOpen;
     items.push({
-        label: 'Change Password…', icon: Icons.key, disabled: cpDisabled,
+        label: 'Change Password…', icon: Icons.key,
+        _keyHint: !cpDisabled ? Icons.key : null,
+        disabled: cpDisabled,
         _tooltip: cpDisabled ? 'End the active session first' : null,
         action: cpDisabled ? null : () => openChangePasswordModal(c)
     });
@@ -223,7 +228,11 @@ function showContainerMenu(e, c) {
     });
 
     items.push({ sep: true });
-    items.push({ label: 'Export Container', icon: Icons.download, action: () => exportContainerFile(c) });
+    items.push({
+        label: 'Export Container', icon: Icons.download,
+        _keyHint: reqExpPw ? Icons.key : null,
+        action: () => exportContainerFile(c, reqExpPw)
+    });
     items.push({ sep: true });
     items.push({ label: 'Delete Container...', icon: Icons.trash, danger: true, action: () => confirmDeleteContainer(c) });
     showCtxMenu(e.clientX, e.clientY, items);
