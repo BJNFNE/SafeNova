@@ -1269,7 +1269,7 @@ function _renderStats() {
    SNAP TO FREE GRID CELL
    occupied = Map<"cx_cy", id>  (cells already taken)
    ============================================================ */
-function _snapFreeCell(rawX, rawY, occupied) {
+function _snapFreeCell(rawX, rawY, occupied, extra) {
     const cx0 = Math.max(0, Math.round((rawX - 8) / GRID_X)),
         cy0 = Math.max(0, Math.round((rawY - 8) / GRID_Y));
     for (let r = 0; r <= 80; r++) {
@@ -1278,7 +1278,8 @@ function _snapFreeCell(rawX, rawY, occupied) {
                 if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
                 const cx = cx0 + dx, cy = cy0 + dy;
                 if (cx < 0 || cy < 0) continue;
-                if (!occupied.has(`${cx}_${cy}`)) return { x: 8 + cx * GRID_X, y: 8 + cy * GRID_Y };
+                const key = `${cx}_${cy}`;
+                if (!occupied.has(key) && !(extra && extra.has(key))) return { x: 8 + cx * GRID_X, y: 8 + cy * GRID_Y };
             }
         }
     }
@@ -1532,7 +1533,8 @@ function _initTouchDragCommon(area, owner, opts = {}) {
     let _tdNode = null, _tdSelEls = null,
         _tdSX = 0, _tdSY = 0, _tdOffX = 0, _tdOffY = 0,
         _tdMoved = false, _tdTimer = null, _tdActive = false,
-        _tdStartPos = {}, _tdHover = null, _tdSnapPrevs = [];
+        _tdStartPos = {}, _tdHover = null, _tdSnapPrevs = [],
+        _tdOccupied = null, _tdLastCx = -1, _tdLastCy = -1;
 
     function _tdReset() {
         if (_tdTimer) { clearTimeout(_tdTimer); _tdTimer = null; }
@@ -1540,6 +1542,7 @@ function _initTouchDragCommon(area, owner, opts = {}) {
         if (_tdSelEls) { _tdSelEls.forEach(el => el.classList.remove('dragging')); _tdSelEls = null; }
         if (_tdHover) { area.querySelector(`.file-item[data-id="${_tdHover}"]`)?.classList.remove('drag-target'); _tdHover = null; }
         _tdSnapPrevs.forEach(p => p.remove()); _tdSnapPrevs = [];
+        _tdOccupied = null; _tdLastCx = _tdLastCy = -1;
         _tdNode = null;
     }
 
@@ -1582,6 +1585,13 @@ function _initTouchDragCommon(area, owner, opts = {}) {
                 _tdSelEls.set(id, el);
                 el.classList.add('dragging');
             });
+            // Build occupied map once at drag start (avoids O(N) per frame)
+            _tdOccupied = new Map(); _tdLastCx = _tdLastCy = -1;
+            VFS.children(owner.folderId).forEach(n => {
+                if (owner.selection.has(n.id)) return;
+                const p = VFS.getPos(owner.folderId, n.id);
+                if (p) _tdOccupied.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
+            });
             _cancelHoverTooltip();
         }, 400);
     }, { passive: true });
@@ -1622,33 +1632,31 @@ function _initTouchDragCommon(area, owner, opts = {}) {
         if (opts.showSnap) {
             if (_tdHover || document.body.classList.contains('no-snap-highlight')) {
                 _tdSnapPrevs.forEach(p => { p.style.display = 'none'; });
+                _tdLastCx = _tdLastCy = -1;
             } else {
-                const selIds = [...owner.selection],
-                    occ = new Map();
-                VFS.children(owner.folderId).forEach(n => {
-                    if (owner.selection.has(n.id)) return;
-                    const p = VFS.getPos(owner.folderId, n.id);
-                    if (p) occ.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
-                });
-                // grow / shrink pool
-                while (_tdSnapPrevs.length < selIds.length) {
-                    const p = document.createElement('div'); p.className = 'snap-preview';
-                    area.appendChild(p); _tdSnapPrevs.push(p);
+                const _scx = Math.round((rawX - 8) / GRID_X), _scy = Math.round((rawY - 8) / GRID_Y);
+                if (_scx !== _tdLastCx || _scy !== _tdLastCy) {
+                    _tdLastCx = _scx; _tdLastCy = _scy;
+                    const selIds = [...owner.selection];
+                    // grow / shrink pool
+                    while (_tdSnapPrevs.length < selIds.length) {
+                        const p = document.createElement('div'); p.className = 'snap-preview';
+                        area.appendChild(p); _tdSnapPrevs.push(p);
+                    }
+                    while (_tdSnapPrevs.length > selIds.length) _tdSnapPrevs.pop().remove();
+                    const extra = new Map();
+                    selIds.forEach((id, i) => {
+                        const sp = _tdStartPos[id],
+                            offX = sp && mainSp ? sp.x - mainSp.x : 0,
+                            offY = sp && mainSp ? sp.y - mainSp.y : 0,
+                            sn = _snapFreeCell(rawX + offX, rawY + offY, _tdOccupied, extra),
+                            cx = Math.round((sn.x - 8) / GRID_X), cy = Math.round((sn.y - 8) / GRID_Y);
+                        extra.set(`${cx}_${cy}`, id);
+                        _tdSnapPrevs[i].style.left = sn.x + 'px';
+                        _tdSnapPrevs[i].style.top = sn.y + 'px';
+                        _tdSnapPrevs[i].style.display = '';
+                    });
                 }
-                while (_tdSnapPrevs.length > selIds.length) _tdSnapPrevs.pop().remove();
-                const snapOcc = new Map(occ),
-                    mainSp = _tdStartPos[_tdNode.id];
-                selIds.forEach((id, i) => {
-                    const sp = _tdStartPos[id],
-                        offX = sp && mainSp ? sp.x - mainSp.x : 0,
-                        offY = sp && mainSp ? sp.y - mainSp.y : 0,
-                        sn = _snapFreeCell(rawX + offX, rawY + offY, snapOcc),
-                        cx = Math.round((sn.x - 8) / GRID_X), cy = Math.round((sn.y - 8) / GRID_Y);
-                    snapOcc.set(`${cx}_${cy}`, id);
-                    _tdSnapPrevs[i].style.left = sn.x + 'px';
-                    _tdSnapPrevs[i].style.top = sn.y + 'px';
-                    _tdSnapPrevs[i].style.display = '';
-                });
             }
         }
     }, { passive: false });
@@ -1825,7 +1833,10 @@ function _startIconDrag(e, node, el, srcCtx) {
         hoverFolder = null,
         hoverWin = null,
         lastX = e.clientX,
-        lastY = e.clientY;
+        lastY = e.clientY,
+        deskOccCached = null,
+        winOccCached = null,
+        lastPrevCx = -1, lastPrevCy = -1, lastPrevMode = '';
 
     // ---- helpers ----------------------------------------------------------
 
@@ -1835,15 +1846,15 @@ function _startIconDrag(e, node, el, srcCtx) {
             targetArea.appendChild(p); previewArr.push(p);
         }
         while (previewArr.length > selIds.length) previewArr.pop().remove();
-        const snapOcc = new Map(occMap),
+        const extra = new Map(),
             mainSp = startPosMap[node.id];
         selIds.forEach((id, i) => {
             const sp = startPosMap[id],
                 offX = sp && mainSp ? sp.x - mainSp.x : 0,
                 offY = sp && mainSp ? sp.y - mainSp.y : 0,
-                snapped = _snapFreeCell(dropX + offX, dropY + offY, snapOcc),
+                snapped = _snapFreeCell(dropX + offX, dropY + offY, occMap, extra),
                 cx = Math.round((snapped.x - 8) / GRID_X), cy = Math.round((snapped.y - 8) / GRID_Y);
-            snapOcc.set(`${cx}_${cy}`, id);
+            extra.set(`${cx}_${cy}`, id);
             previewArr[i].style.left = snapped.x + 'px';
             previewArr[i].style.top = snapped.y + 'px';
             previewArr[i].style.display = '';
@@ -2013,6 +2024,14 @@ function _startIconDrag(e, node, el, srcCtx) {
         if (effectiveHoverWin !== hoverWin) {
             winSnapPreviewEls.forEach(p => p.remove()); winSnapPreviewEls = [];
             hoverWin = effectiveHoverWin;
+            if (hoverWin) {
+                winOccCached = new Map();
+                VFS.children(hoverWin.folderId).forEach(n => {
+                    const p = VFS.getPos(hoverWin.folderId, n.id);
+                    if (p) winOccCached.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
+                });
+            } else { winOccCached = null; }
+            lastPrevMode = '';
         }
 
         // ---- snap previews ------------------------------------------------
@@ -2022,6 +2041,7 @@ function _startIconDrag(e, node, el, srcCtx) {
             snapPreviewEls.forEach(p => p.style.display = 'none');
             deskSnapPreviewEls.forEach(p => p.style.display = 'none');
             winSnapPreviewEls.forEach(p => p.style.display = 'none');
+            lastPrevMode = '';
         } else if (hoverWin) {
             snapPreviewEls.forEach(p => p.style.display = 'none');
             deskSnapPreviewEls.forEach(p => p.style.display = 'none');
@@ -2029,12 +2049,11 @@ function _startIconDrag(e, node, el, srcCtx) {
                 wRect = winArea.getBoundingClientRect(),
                 dropX = mv.clientX - wRect.left + winArea.scrollLeft - clickOffX,
                 dropY = mv.clientY - wRect.top + winArea.scrollTop - clickOffY,
-                winOcc = new Map();
-            VFS.children(hoverWin.folderId).forEach(n => {
-                const p = VFS.getPos(hoverWin.folderId, n.id);
-                if (p) winOcc.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
-            });
-            _showPreviews(winSnapPreviewEls, [...srcCtx.selection], dropX, dropY, winOcc, winArea);
+                _cx = Math.round((dropX - 8) / GRID_X), _cy = Math.round((dropY - 8) / GRID_Y);
+            if (_cx !== lastPrevCx || _cy !== lastPrevCy || lastPrevMode !== 'win') {
+                lastPrevCx = _cx; lastPrevCy = _cy; lastPrevMode = 'win';
+                _showPreviews(winSnapPreviewEls, [...srcCtx.selection], dropX, dropY, winOccCached, winArea);
+            }
         } else if (escaped) {
             // on desktop (FW items that escaped)
             snapPreviewEls.forEach(p => p.style.display = 'none');
@@ -2043,17 +2062,27 @@ function _startIconDrag(e, node, el, srcCtx) {
                 dRect = deskArea.getBoundingClientRect(),
                 dropX = mv.clientX - dRect.left + deskArea.scrollLeft - clickOffX,
                 dropY = mv.clientY - dRect.top + deskArea.scrollTop - clickOffY,
-                deskOcc = new Map();
-            VFS.children(Desktop._desktopFolder).forEach(n => {
-                const p = VFS.getPos(Desktop._desktopFolder, n.id);
-                if (p) deskOcc.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
-            });
-            _showPreviews(deskSnapPreviewEls, [...srcCtx.selection], dropX, dropY, deskOcc, deskArea);
+                _cx = Math.round((dropX - 8) / GRID_X), _cy = Math.round((dropY - 8) / GRID_Y);
+            if (!deskOccCached) {
+                deskOccCached = new Map();
+                VFS.children(Desktop._desktopFolder).forEach(n => {
+                    const p = VFS.getPos(Desktop._desktopFolder, n.id);
+                    if (p) deskOccCached.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
+                });
+            }
+            if (_cx !== lastPrevCx || _cy !== lastPrevCy || lastPrevMode !== 'desk') {
+                lastPrevCx = _cx; lastPrevCy = _cy; lastPrevMode = 'desk';
+                _showPreviews(deskSnapPreviewEls, [...srcCtx.selection], dropX, dropY, deskOccCached, deskArea);
+            }
         } else {
             // within source area (desktop or FW)
             deskSnapPreviewEls.forEach(p => p.style.display = 'none');
             winSnapPreviewEls.forEach(p => p.style.display = 'none');
-            _showPreviews(snapPreviewEls, [...srcCtx.selection], mainSp.x + dx, mainSp.y + dy, srcOccupied, srcArea);
+            const _cx = Math.round((mainSp.x + dx - 8) / GRID_X), _cy = Math.round((mainSp.y + dy - 8) / GRID_Y);
+            if (_cx !== lastPrevCx || _cy !== lastPrevCy || lastPrevMode !== 'src') {
+                lastPrevCx = _cx; lastPrevCy = _cy; lastPrevMode = 'src';
+                _showPreviews(snapPreviewEls, [...srcCtx.selection], mainSp.x + dx, mainSp.y + dy, srcOccupied, srcArea);
+            }
         }
     };
 
