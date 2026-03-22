@@ -91,15 +91,16 @@ function _openFolderGuard(ids) {
 }
 
 // ── logActivity ─────────────────────────────────────────────
-function logActivity(op, detail, count) {
+function logActivity(op, detail, count, itemPath) {
     if (!App.container) return;
     if (_getSettings().activityLogs === false) return;
     const entry = { t: Date.now(), o: op, d: detail };
     if (count > 1) entry.n = count;
-    if (App.folder && App.folder !== 'root') {
-        const p = VFS.fullPath(App.folder);
-        if (p && p !== '/') entry.p = p;
+    let p = itemPath ?? null;
+    if (!p && App.folder && App.folder !== 'root') {
+        p = VFS.fullPath(App.folder);
     }
+    if (p && p !== '/') entry.p = p;
     _activityLog.push(entry);
     if (_activityLog.length > ALOG_MAX) _activityLog.splice(0, _activityLog.length - ALOG_MAX);
     if (_alogSaveTimer) clearTimeout(_alogSaveTimer);
@@ -114,6 +115,17 @@ function _alogRelTime(ts) {
     if (d < 86400000) return Math.floor(d / 3600000) + 'h ago';
     if (d < 604800000) return Math.floor(d / 86400000) + 'd ago';
     return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+// Show path compactly: /~/Container/…/parent/name for deep paths
+function _alogPathDisplay(p) {
+    if (!p) return '';
+    const segs = p.split('/').filter(Boolean); // ['~', 'Container', 'a', 'b', 'file']
+    if (p.length <= 58 || segs.length <= 4) return p;
+    const prefix = '/~/' + segs[1] + '/\u2026/';
+    const tail = segs.slice(-2).join('/') + (p.endsWith('/') ? '/' : '');
+    const result = prefix + tail;
+    // If still too long, keep only the last segment
+    return result.length <= 62 ? result : prefix + segs[segs.length - 1] + (p.endsWith('/') ? '/' : '');
 }
 function _alogOpLabel(op) {
     const map = {
@@ -237,12 +249,12 @@ function _renderActivityLogs() {
         }
         const color = _ALOG_COLORS[it.o] || '#666',
             label = _alogOpLabel(it.o),
-            pathHtml = it.p ? ` <span class="alog-path">in ${escHtml(it.p)}</span>` : '',
-            detail = it.n > 1
-                ? `${it.n} items — ${escHtml(it.d)}${pathHtml}`
-                : `${escHtml(it.d)}${pathHtml}`,
+            mainText = it.d || '',
+            pathFull = it.p ? (it.n > 1 && !it.p.endsWith('/') ? it.p + '/' : it.p) : '',
+            pathShort = _alogPathDisplay(pathFull),
+            pathHtml = pathShort ? `<code class="alog-path-chip" title="${escHtml(pathFull)}">${escHtml(pathShort)}</code>` : '',
             time = _alogRelTime(it.t);
-        html += `<div class="alog-item"><span class="alog-badge" style="--bc:${color}">${escHtml(label)}</span><span class="alog-detail" title="${escHtml(it.d)}${it.p ? ' (' + escHtml(it.p) + ')' : ''}">${detail}</span><span class="alog-time">${escHtml(time)}</span></div>`;
+        html += `<div class="alog-item"><span class="alog-badge" style="--bc:${color}">${escHtml(label)}</span><span class="alog-detail"><span class="alog-detail-main" title="${escHtml(mainText)}">${escHtml(mainText)}</span>${pathHtml}</span><span class="alog-time">${escHtml(time)}</span></div>`;
     }
     contentEl.innerHTML = html;
     listEl.onscroll = null;
@@ -1892,7 +1904,13 @@ function _startIconDrag(e, node, el, srcCtx) {
             }
             movedIds.push(id);
         }
-        if (movedIds.length) logActivity('move', `${movedIds.length} item${movedIds.length > 1 ? 's' : ''} → ${VFS.node(destFid)?.name || 'folder'}`, movedIds.length);
+        if (movedIds.length) {
+            const _mvDest = VFS.node(destFid)?.name || 'folder';
+            logActivity('move',
+                movedIds.length === 1 ? `${VFS.node(movedIds[0])?.name} → ${_mvDest}` : `${movedIds.length} items → ${_mvDest}`,
+                movedIds.length,
+                movedIds.length === 1 ? VFS.fullPath(movedIds[0]) : VFS.fullPath(destFid));
+        }
         return movedIds;
     }
 
@@ -2199,7 +2217,10 @@ function _startIconDrag(e, node, el, srcCtx) {
                     }
                 }
             });
-            if (movedIds.length) logActivity('move', `${movedIds.length} item${movedIds.length > 1 ? 's' : ''} → Desktop`, movedIds.length);
+            if (movedIds.length) logActivity('move',
+                movedIds.length === 1 ? `${VFS.node(movedIds[0])?.name} → Desktop` : `${movedIds.length} items → Desktop`,
+                movedIds.length,
+                movedIds.length === 1 ? VFS.fullPath(movedIds[0]) : null);
             srcCtx.updateUI();
             await saveVFS();
             Desktop._patchIcons();
@@ -2338,7 +2359,7 @@ function _buildIconMenuItems(node, sel, opts) {
             label: 'Folder Color', icon: Icons.folder, submenu: FOLDER_COLORS.map(fc => ({
                 label: fc.label,
                 icon: `<span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:${fc.color}"></span>`,
-                action: async () => { node.color = fc.color === '#0078d4' ? undefined : fc.color; await saveVFS(); opts.colorCb(); logActivity('color', `${node.name} → ${fc.label}`); }
+                action: async () => { node.color = fc.color === '#0078d4' ? undefined : fc.color; await saveVFS(); opts.colorCb(); logActivity('color', `${node.name} → ${fc.label}`, 1, VFS.fullPath(node.id)); }
             }))
         });
     } else {

@@ -39,7 +39,7 @@ async function uploadFiles(files) {
     }
 
     showLoading(`Encrypting ${files.length} file${files.length > 1 ? 's' : ''}...`);
-    let ok = 0;
+    let ok = 0, _okIds = [];
     const fileArr = Array.from(files);
     const BATCH = 4;
     for (let i = 0; i < fileArr.length; i += BATCH) {
@@ -55,10 +55,10 @@ async function uploadFiles(files) {
                 parentId: App.folder, ctime: Date.now(), mtime: Date.now()
             });
             await DB.saveFile({ id: nodeId, cid: App.container.id, iv: Array.from(iv), blob });
-            return true;
+            return nodeId;
         }));
         for (let j = 0; j < results.length; j++) {
-            if (results[j].status === 'fulfilled') ok++;
+            if (results[j].status === 'fulfilled') { ok++; _okIds.push(results[j].value); }
             else { console.error('upload error', batch[j].name, results[j].reason); toast('Failed to encrypt: ' + batch[j].name, 'error'); }
         }
         showLoading(`Encrypting... ${Math.min(i + BATCH, fileArr.length)}/${fileArr.length}`);
@@ -68,7 +68,7 @@ async function uploadFiles(files) {
     hideLoading();
     if (ok > 0) {
         toast(`${ok} file${ok > 1 ? 's' : ''} imported`, 'success');
-        logActivity('upload', ok === 1 ? files[0].name : `${ok} files`, ok);
+        logActivity('upload', ok === 1 ? files[0].name : `${ok} files`, ok, ok === 1 && _okIds[0] ? VFS.fullPath(_okIds[0]) : null);
     }
 }
 
@@ -181,7 +181,10 @@ async function uploadEntries(dataTransferItems, targetFolderId) {
     hideLoading();
     if (ok > 0) {
         toast(`${ok} item${ok !== 1 ? 's' : ''} imported`, 'success');
-        logActivity('upload', `${ok} items`, ok);
+        {
+            const _sn = ok === 1 ? VFS.children(targetFolderId).find(n => n.name === sanitizeFilename(entries[0]?.name || '')) : null;
+            logActivity('upload', ok === 1 ? (entries[0]?.name ?? '1 item') : `${ok} items`, ok, _sn ? VFS.fullPath(_sn.id) : null);
+        }
     }
 }
 
@@ -223,7 +226,7 @@ async function downloadFile(node) {
         const buf = await Crypto.decryptBin(App.key, rec.iv, rec.blob);
         downloadBuf(buf, node.name, node.mime || getMime(node.name));
         toast('Exported: ' + node.name, 'success');
-        logActivity('download', node.name);
+        logActivity('download', node.name, 1, VFS.fullPath(node.id));
     } catch (e) { toast('Decryption failed: ' + e.message, 'error'); }
     hideLoading();
 }
@@ -244,7 +247,7 @@ function _confirmExport(node, buf, mime) {
         Overlay.hide();
         downloadBuf(buf, node.name, mime);
         toast('Exported: ' + node.name, 'success');
-        logActivity('download', node.name);
+        logActivity('download', node.name, 1, VFS.fullPath(node.id));
     };
 }
 
@@ -290,6 +293,7 @@ async function deleteSelected() {
         }
         if (allFileIds.length) await DB.deleteFiles(allFileIds).catch(() => {});
         allFileIds.forEach(fid => { delete App.thumbCache[fid]; });
+        const _delSinglePath = ids.length === 1 ? VFS.fullPath(ids[0]) : null;
         for (const id of ids) VFS.remove(id);
         selRef.clear();
         await saveVFS();
@@ -297,7 +301,7 @@ async function deleteSelected() {
         if (typeof WinManager !== 'undefined') WinManager.renderAll();
         hideLoading();
         toast('Deleted', 'info');
-        logActivity('delete', ids.length === 1 ? names[0] : `${ids.length} items`, ids.length);
+        logActivity('delete', ids.length === 1 ? names[0] : `${ids.length} items`, ids.length, _delSinglePath);
     };
 }
 
@@ -362,7 +366,7 @@ async function createTextFile() {
     await saveVFS();
     if (winCtx) winCtx.render(); else Desktop._patchIcons();
     toast(`File “${name}” created`, 'success');
-    logActivity('create-file', name);
+    logActivity('create-file', name, 1, VFS.fullPath(nodeId));
 }
 
 /* ============================================================
@@ -416,7 +420,7 @@ async function createFolder() {
     await saveVFS();
     if (winCtx) winCtx.render(); else Desktop._patchIcons();
     toast(`Folder "${name}" created`, 'success');
-    logActivity('create-folder', name);
+    logActivity('create-folder', name, 1, VFS.fullPath(nodeId));
 }
 
 /* ============================================================
@@ -456,7 +460,7 @@ function renameNode(node) {
         VFS.rename(node.id, newName);
         await saveVFS();
         if (capturedWinCtx) capturedWinCtx.render(); else Desktop._patchIcons();
-        logActivity('rename', `${_oldName} → ${newName}`);
+        logActivity('rename', `${_oldName} → ${newName}`, 1, VFS.fullPath(node.id));
     };
 }
 
@@ -466,7 +470,7 @@ function renameNode(node) {
 function copyItems() {
     App.clipboard = { op: 'copy', ids: [...App.selection] };
     toast(`${App.clipboard.ids.length} item(s) copied`, 'info');
-    logActivity('copy', `${App.clipboard.ids.length} items`, App.clipboard.ids.length);
+    logActivity('copy', App.clipboard.ids.length === 1 ? (VFS.node(App.clipboard.ids[0])?.name ?? '1 item') : `${App.clipboard.ids.length} items`, App.clipboard.ids.length, App.clipboard.ids.length === 1 ? VFS.fullPath(App.clipboard.ids[0]) : null);
 }
 function cutItems() {
     // Prevent cutting folders currently open in Explorer windows
@@ -478,7 +482,7 @@ function cutItems() {
 
     App.clipboard = { op: 'cut', ids: [...App.selection] };
     toast(`${App.clipboard.ids.length} item(s) cut`, 'info');
-    logActivity('cut', `${App.clipboard.ids.length} items`, App.clipboard.ids.length);
+    logActivity('cut', App.clipboard.ids.length === 1 ? (VFS.node(App.clipboard.ids[0])?.name ?? '1 item') : `${App.clipboard.ids.length} items`, App.clipboard.ids.length, App.clipboard.ids.length === 1 ? VFS.fullPath(App.clipboard.ids[0]) : null);
     _applyCutStyles();
 }
 
@@ -506,6 +510,7 @@ async function pasteItems() {
         }
     }
 
+    let _pastedSn = null;
     for (const id of ids) {
         const n = VFS.node(id); if (!n) continue;
         if (op === 'cut') {
@@ -513,10 +518,12 @@ async function pasteItems() {
             const result = VFS.move(id, App.folder);
             if (result === 'duplicate') { toast(`"${n.name}" already exists in this folder`, 'error'); continue; }
             if (result === 'cycle') { toast(`Cannot paste "${n.name}" into itself or a subfolder`, 'error'); continue; }
+            _pastedSn = n.name;
         } else {
             let name = n.name;
             if (VFS.hasChildNamed(App.folder, name)) name = _dedupName(App.folder, name);
             await deepCopy(id, App.folder, name !== n.name ? name : undefined);
+            _pastedSn = name;
         }
     }
     if (op === 'cut') App.clipboard = null;
@@ -526,7 +533,8 @@ async function pasteItems() {
     Desktop._patchIcons();
     if (typeof WinManager !== 'undefined') WinManager.renderAll();
     const _destName = VFS.node(App.folder)?.name || 'Desktop';
-    logActivity('paste', `${ids.length} items → ${_destName}`, ids.length);
+    const _pastedFp = ids.length === 1 && _pastedSn ? VFS.fullPath(App.folder) : null;
+    logActivity('paste', ids.length === 1 ? `${_pastedSn ?? VFS.node(ids[0])?.name ?? '1 item'} → ${_destName}` : `${ids.length} items → ${_destName}`, ids.length, _pastedFp && _pastedFp !== '/' ? _pastedFp + '/' + _pastedSn : null);
 }
 
 async function deepCopy(nodeId, newParent, newName, _depth = 0) {
@@ -775,7 +783,7 @@ async function saveEditor() {
         await saveVFS();
         Desktop._patchIcons();
         toast('File saved', 'success');
-        logActivity('edit', _editorNode.name);
+        logActivity('edit', _editorNode.name, 1, VFS.fullPath(_editorNode.id));
         saved = true;
     } catch (e) { toast('Save failed: ' + e.message, 'error'); console.error(e); }
     hideLoading();
@@ -1162,7 +1170,7 @@ async function exportAsZip(nodeIds, zipName) {
         const zip = _buildZip(entries);
         downloadBuf(zip.buffer, zipName, 'application/zip');
         toast(`Exported ${entries.length} file${entries.length !== 1 ? 's' : ''} as ZIP`, 'success');
-        logActivity('export-zip', `${entries.length} files`, entries.length);
+        logActivity('export-zip', nodeIds.length === 1 ? (VFS.node(nodeIds[0])?.name ?? entries[0]?.name ?? '1 file') : `${entries.length} files`, entries.length, nodeIds.length === 1 ? VFS.fullPath(nodeIds[0]) : null);
     } catch (e) { toast('ZIP export failed: ' + e.message, 'error'); console.error(e); }
     hideLoading();
 }
