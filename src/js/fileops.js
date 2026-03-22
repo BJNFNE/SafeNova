@@ -520,6 +520,7 @@ async function pasteItems() {
     }
 
     let _pastedSn = null;
+    const _pastedIds = [];
     for (const id of ids) {
         const n = VFS.node(id); if (!n) continue;
         if (op === 'cut') {
@@ -528,12 +529,34 @@ async function pasteItems() {
             if (result === 'duplicate') { toast(`"${n.name}" already exists in this folder`, 'error'); continue; }
             if (result === 'cycle') { toast(`Cannot paste "${n.name}" into itself or a subfolder`, 'error'); continue; }
             _pastedSn = n.name;
+            _pastedIds.push(id);
         } else {
             let name = n.name;
             if (VFS.hasChildNamed(App.folder, name)) name = _dedupName(App.folder, name);
-            await deepCopy(id, App.folder, name !== n.name ? name : undefined);
+            const newId = await deepCopy(id, App.folder, name !== n.name ? name : undefined);
             _pastedSn = name;
+            if (newId) _pastedIds.push(newId);
         }
+    }
+    // Position pasted items at the context-menu cursor (set by right-click / long-press Paste)
+    if (App._ctxScreenPos && _pastedIds.length > 0) {
+        const winCtx = App._winCtx;
+        const area2 = winCtx ? winCtx.el.querySelector('.fw-area') : document.getElementById('desktop-area');
+        const rect2 = area2.getBoundingClientRect();
+        const rawX = App._ctxScreenPos.x - rect2.left + area2.scrollLeft;
+        const rawY = App._ctxScreenPos.y - rect2.top + area2.scrollTop;
+        const occ = new Map();
+        VFS.children(App.folder).forEach(n => {
+            if (_pastedIds.includes(n.id)) return;
+            const p = VFS.getPos(App.folder, n.id);
+            if (p) occ.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
+        });
+        _pastedIds.forEach(id => {
+            const snapped = _snapFreeCell(rawX, rawY, occ);
+            VFS.setPos(App.folder, id, snapped.x, snapped.y);
+            occ.set(`${Math.round((snapped.x - 8) / GRID_X)}_${Math.round((snapped.y - 8) / GRID_Y)}`, id);
+        });
+        App._ctxScreenPos = null;
     }
     if (op === 'cut') App.clipboard = null;
     _applyCutStyles();
@@ -547,8 +570,8 @@ async function pasteItems() {
 }
 
 async function deepCopy(nodeId, newParent, newName, _depth = 0) {
-    if (_depth > 64 || nodeId === 'root') return;
-    const n = VFS.node(nodeId); if (!n) return;
+    if (_depth > 64 || nodeId === 'root') return null;
+    const n = VFS.node(nodeId); if (!n) return null;
     const newId = uid();
     const name = newName || n.name;
     if (n.type === 'file') {
@@ -559,6 +582,7 @@ async function deepCopy(nodeId, newParent, newName, _depth = 0) {
         VFS.add({ ...n, id: newId, name, parentId: newParent, ctime: Date.now(), mtime: Date.now() });
         for (const child of VFS.children(nodeId)) await deepCopy(child.id, newId, undefined, _depth + 1);
     }
+    return newId;
 }
 
 /* ============================================================

@@ -1529,10 +1529,19 @@ function _syncAreaWidth(area) {
 function _initTouchDragCommon(area, owner, opts = {}) {
     if (typeof window.ontouchstart === 'undefined' && !navigator.maxTouchPoints) return;
 
-    let _tdNode = null, _tdEl = null,
+    let _tdNode = null, _tdSelEls = null,
         _tdSX = 0, _tdSY = 0, _tdOffX = 0, _tdOffY = 0,
         _tdMoved = false, _tdTimer = null, _tdActive = false,
-        _tdStartPos = {}, _tdHover = null, _tdSnapPrev = null;
+        _tdStartPos = {}, _tdHover = null, _tdSnapPrevs = [];
+
+    function _tdReset() {
+        if (_tdTimer) { clearTimeout(_tdTimer); _tdTimer = null; }
+        _tdActive = false; _touchDragActive = false;
+        if (_tdSelEls) { _tdSelEls.forEach(el => el.classList.remove('dragging')); _tdSelEls = null; }
+        if (_tdHover) { area.querySelector(`.file-item[data-id="${_tdHover}"]`)?.classList.remove('drag-target'); _tdHover = null; }
+        _tdSnapPrevs.forEach(p => p.remove()); _tdSnapPrevs = [];
+        _tdNode = null;
+    }
 
     area.addEventListener('touchstart', e => {
         if (e.touches.length !== 1) return;
@@ -1552,11 +1561,12 @@ function _initTouchDragCommon(area, owner, opts = {}) {
 
         _tdTimer = setTimeout(() => {
             if (_tdMoved) return;
+            // Guard: if a context menu was opened during the hold (e.g. Android fires
+            // contextmenu + touchcancel before our 400ms timer), do not start drag.
+            if (document.getElementById('ctx-menu').classList.contains('show')) return;
             _tdActive = true;
             _touchDragActive = true;
             _tdNode = node;
-            _tdEl = iconEl;
-
             if (!owner.selection.has(nodeId)) {
                 owner.selection.clear();
                 area.querySelectorAll('.file-item.selected').forEach(i => i.classList.remove('selected'));
@@ -1564,12 +1574,14 @@ function _initTouchDragCommon(area, owner, opts = {}) {
                 iconEl.classList.add('selected');
                 owner._updateStatus();
             }
-            _tdStartPos = {};
+            _tdStartPos = {}; _tdSelEls = new Map();
             owner.selection.forEach(id => {
-                const el = area.querySelector(`.file-item[data-id="${id}"]`);
-                if (el) _tdStartPos[id] = { x: parseInt(el.style.left), y: parseInt(el.style.top) };
+                const el = area._iconMap?.get(id) ?? area.querySelector(`.file-item[data-id="${id}"]`);
+                if (!el) return;
+                _tdStartPos[id] = { x: parseInt(el.style.left), y: parseInt(el.style.top) };
+                _tdSelEls.set(id, el);
+                el.classList.add('dragging');
             });
-            iconEl.classList.add('dragging');
             _cancelHoverTooltip();
         }, 400);
     }, { passive: true });
@@ -1587,22 +1599,15 @@ function _initTouchDragCommon(area, owner, opts = {}) {
             rawY = t.clientY - aR.top + area.scrollTop - _tdOffY,
             ddx = rawX - mainSp.x, ddy = rawY - mainSp.y;
 
-        owner.selection.forEach(id => {
-            const el = area.querySelector(`.file-item[data-id="${id}"]`),
-                sp = _tdStartPos[id];
-            if (el && sp) { el.style.left = (sp.x + ddx) + 'px'; el.style.top = (sp.y + ddy) + 'px'; }
+        _tdSelEls.forEach((el, id) => {
+            const sp = _tdStartPos[id];
+            if (sp) { el.style.left = (sp.x + ddx) + 'px'; el.style.top = (sp.y + ddy) + 'px'; }
         });
 
         // Highlight folder under finger
-        owner.selection.forEach(id => {
-            const el = area.querySelector(`.file-item[data-id="${id}"]`);
-            if (el) el.style.pointerEvents = 'none';
-        });
+        _tdSelEls.forEach(el => { el.style.pointerEvents = 'none'; });
         const hit = document.elementFromPoint(t.clientX, t.clientY);
-        owner.selection.forEach(id => {
-            const el = area.querySelector(`.file-item[data-id="${id}"]`);
-            if (el) el.style.pointerEvents = '';
-        });
+        _tdSelEls.forEach(el => { el.style.pointerEvents = ''; });
         const folderEl = hit?.closest('.file-item[data-id]');
         const newHover = folderEl && area.contains(folderEl) &&
             !owner.selection.has(folderEl.dataset.id) &&
@@ -1613,77 +1618,79 @@ function _initTouchDragCommon(area, owner, opts = {}) {
             if (_tdHover && folderEl) folderEl.classList.add('drag-target');
         }
 
-        // Snap preview (optional — Desktop only by default)
+        // Snap preview — one per selected item (mirrors mouse _showPreviews)
         if (opts.showSnap) {
             if (_tdHover || document.body.classList.contains('no-snap-highlight')) {
-                if (_tdSnapPrev) _tdSnapPrev.style.display = 'none';
+                _tdSnapPrevs.forEach(p => { p.style.display = 'none'; });
             } else {
-                const occ = new Map();
+                const selIds = [...owner.selection],
+                    occ = new Map();
                 VFS.children(owner.folderId).forEach(n => {
                     if (owner.selection.has(n.id)) return;
                     const p = VFS.getPos(owner.folderId, n.id);
                     if (p) occ.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
                 });
-                const sn = _snapFreeCell(rawX, rawY, occ);
-                if (!_tdSnapPrev) {
-                    _tdSnapPrev = document.createElement('div');
-                    _tdSnapPrev.className = 'snap-preview';
-                    area.appendChild(_tdSnapPrev);
+                // grow / shrink pool
+                while (_tdSnapPrevs.length < selIds.length) {
+                    const p = document.createElement('div'); p.className = 'snap-preview';
+                    area.appendChild(p); _tdSnapPrevs.push(p);
                 }
-                _tdSnapPrev.style.left = sn.x + 'px';
-                _tdSnapPrev.style.top = sn.y + 'px';
-                _tdSnapPrev.style.display = '';
+                while (_tdSnapPrevs.length > selIds.length) _tdSnapPrevs.pop().remove();
+                const snapOcc = new Map(occ),
+                    mainSp = _tdStartPos[_tdNode.id];
+                selIds.forEach((id, i) => {
+                    const sp = _tdStartPos[id],
+                        offX = sp && mainSp ? sp.x - mainSp.x : 0,
+                        offY = sp && mainSp ? sp.y - mainSp.y : 0,
+                        sn = _snapFreeCell(rawX + offX, rawY + offY, snapOcc),
+                        cx = Math.round((sn.x - 8) / GRID_X), cy = Math.round((sn.y - 8) / GRID_Y);
+                    snapOcc.set(`${cx}_${cy}`, id);
+                    _tdSnapPrevs[i].style.left = sn.x + 'px';
+                    _tdSnapPrevs[i].style.top = sn.y + 'px';
+                    _tdSnapPrevs[i].style.display = '';
+                });
             }
         }
     }, { passive: false });
 
     area.addEventListener('touchend', async () => {
-        if (_tdTimer) { clearTimeout(_tdTimer); _tdTimer = null; }
-        if (!_tdActive || !_tdNode) { _tdActive = false; _touchDragActive = false; _tdNode = null; return; }
-        _tdActive = false; _touchDragActive = false;
+        if (!_tdActive || !_tdNode) { _tdReset(); return; }
+        const hoverTarget = _tdHover;
+        _tdReset();
 
-        const node = _tdNode; _tdNode = null;
-        _tdEl?.classList.remove('dragging');
-        if (_tdHover) area.querySelector(`.file-item[data-id="${_tdHover}"]`)?.classList.remove('drag-target');
-        if (_tdSnapPrev) { _tdSnapPrev.remove(); _tdSnapPrev = null; }
-
-        if (_tdHover) {
+        if (hoverTarget) {
             // open-folder guard
             const blocked = _openFolderGuard(owner.selection);
             if (blocked) {
-                _snapBack(_tdStartPos);
+                _snapBack();
                 toast(`\u201C${VFS.node(blocked)?.name}\u201D is open in Explorer \u2014 close the window first`, 'error');
-                _tdHover = null;
                 return;
             }
-            const cycled = [...owner.selection].filter(id => VFS.wouldCycle(id, _tdHover));
+            const cycled = [...owner.selection].filter(id => VFS.wouldCycle(id, hoverTarget));
             if (cycled.length) {
-                _snapBack(_tdStartPos);
+                _snapBack();
                 toast(`Cannot move "${VFS.node(cycled[0])?.name}" into itself`, 'error');
-                _tdHover = null;
                 return;
             }
-            const tgtChildren = VFS.children(_tdHover),
+            const tgtChildren = VFS.children(hoverTarget),
                 existing = new Set(tgtChildren.map(n => n.name.toLowerCase())),
-                dupe = [...owner.selection].find(id => id !== _tdHover && existing.has(VFS.node(id)?.name?.toLowerCase()));
+                dupe = [...owner.selection].find(id => id !== hoverTarget && existing.has(VFS.node(id)?.name?.toLowerCase()));
             if (dupe) {
-                _snapBack(_tdStartPos);
+                _snapBack();
                 toast(`"${VFS.node(dupe)?.name}" already exists in target folder`, 'error');
-                _tdHover = null;
                 return;
             }
             const moved = [];
             owner.selection.forEach(id => {
-                if (id === _tdHover) return;
-                if (VFS.move(id, _tdHover) === 'ok') {
+                if (id === hoverTarget) return;
+                if (VFS.move(id, hoverTarget) === 'ok') {
                     moved.push(id);
                     area.querySelector(`.file-item[data-id="${id}"]`)?.remove();
                     area._iconMap?.delete(id);
                 }
             });
-            if (moved.length) logActivity('move', `${moved.length} item${moved.length > 1 ? 's' : ''} \u2192 ${VFS.node(_tdHover)?.name || 'folder'}`, moved.length);
+            if (moved.length) logActivity('move', `${moved.length} item${moved.length > 1 ? 's' : ''} \u2192 ${VFS.node(hoverTarget)?.name || 'folder'}`, moved.length);
             moved.forEach(id => owner.selection.delete(id));
-            _tdHover = null;
         } else {
             // Snap to grid in place
             const occupied = new Map();
@@ -1708,8 +1715,8 @@ function _initTouchDragCommon(area, owner, opts = {}) {
         if (opts.afterDrop) opts.afterDrop();
         if (typeof WinManager !== 'undefined') WinManager.renderAll();
 
-        function _snapBack(startPos) {
-            Object.entries(startPos).forEach(([id, sp]) => {
+        function _snapBack() {
+            Object.entries(_tdStartPos).forEach(([id, sp]) => {
                 const el = area.querySelector(`.file-item[data-id="${id}"]`);
                 if (el && sp) {
                     el.style.transition = 'left .12s ease,top .12s ease';
@@ -1720,14 +1727,13 @@ function _initTouchDragCommon(area, owner, opts = {}) {
         }
     });
 
-    area.addEventListener('touchcancel', () => {
-        _touchDragActive = false; _tdActive = false;
-        if (_tdTimer) { clearTimeout(_tdTimer); _tdTimer = null; }
-        if (_tdEl) { _tdEl.classList.remove('dragging'); _tdEl = null; }
-        if (_tdHover) { area.querySelector(`.file-item[data-id="${_tdHover}"]`)?.classList.remove('drag-target'); _tdHover = null; }
-        if (_tdSnapPrev) { _tdSnapPrev.remove(); _tdSnapPrev = null; }
-        _tdNode = null;
-    }, { passive: true });
+    area.addEventListener('touchcancel', () => { _tdReset(); }, { passive: true });
+
+    // On Android, long-press fires contextmenu + touchcancel before our 400ms timer.
+    // touchcancel clears el._tsIsTouch so the contextmenu guard in _initAreaTouchHandlers
+    // passes — the menu opens correctly. But if the timer already fired (or a new touch
+    // sequence starts after the menu), drag state must be reset so no ghost drag occurs.
+    area.addEventListener('contextmenu', () => { _tdReset(); });
 }
 
 /* ---- Shared rubber-band mouse selection ----
@@ -2341,7 +2347,7 @@ function _buildAreaMenuItems(e, syncFn, sortTarget, refreshFn) {
     ];
     if (App.clipboard) {
         items.push({ sep: true });
-        items.push({ label: 'Paste', icon: Icons.paste, action: () => { syncFn(); pasteItems(); } });
+        items.push({ label: 'Paste', icon: Icons.paste, action: () => { syncFn(); App._ctxScreenPos = { x: e.clientX, y: e.clientY }; pasteItems(); } });
     }
     items.push({ sep: true });
     items.push({ label: 'Sort', icon: Icons.sort, submenu: _buildSortSubmenu(sortTarget) });
