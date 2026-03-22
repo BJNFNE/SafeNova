@@ -3054,7 +3054,7 @@ class FolderWindow {
 
     /* ---- TOUCH DRAG for mobile (inside folder window) ---- */
     _initFwTouchDrag(area) {
-        _initTouchDragCommon(area, this, { showSnap: false });
+        _initTouchDragCommon(area, this, { showSnap: true });
     }
 
     /* ---- RUBBER BAND selection ---- */
