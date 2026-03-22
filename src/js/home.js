@@ -274,17 +274,36 @@ async function doChangePassword() {
     if (newPw !== newPw2) { errEl.textContent = 'Passwords do not match'; return; }
     if (oldPw === newPw) { errEl.textContent = 'New password must differ from current'; return; }
 
-    errEl.textContent = '';
-    Overlay.hide();
-    showLoading('Verifying current password…');
+    // Rate-limit check
+    const cpKey = 'cp:' + c.id,
+        cpFails = _failCounts.get(cpKey) || { count: 0, lockUntil: 0 };
+    if (cpFails.lockUntil > Date.now()) return;
+
+    errEl.innerHTML = '';
+    okBtn.disabled = true;
+    let _cpInModal = true;
 
     try {
         // Verify old password
         const oldKey = await Crypto.deriveKey(oldPw, new Uint8Array(c.salt)),
             ok = await Crypto.checkVerification(oldKey, c.verIv, c.verBlob);
-        if (!ok) { hideLoading(); toast('Incorrect current password', 'error'); return; }
-
+        if (!ok) {
+            cpFails.count++;
+            _failCounts.set(cpKey, cpFails);
+            if (cpFails.count > 3) {
+                cpFails.lockUntil = Date.now() + 3000;
+                _startAttemptCooldown(errEl, okBtn, () => { cpFails.lockUntil = 0; });
+            } else {
+                errEl.innerHTML = `${_ERR_SVG} Incorrect current password`;
+                okBtn.disabled = false;
+            }
+            return;
+        }
+        _cpInModal = false;
+        _failCounts.delete(cpKey);
+        Overlay.hide();
         showLoading('Deriving new key…');
+
         const newSalt = Array.from(crypto.getRandomValues(new Uint8Array(32))),
             newKey = await Crypto.deriveKey(newPw, new Uint8Array(newSalt));
 
@@ -342,8 +361,13 @@ async function doChangePassword() {
         toast(`Password for "${c.name}" changed successfully`, 'success');
         Home.render();
     } catch (e) {
-        hideLoading();
-        toast('Change password failed: ' + e.message, 'error');
+        if (_cpInModal) {
+            okBtn.disabled = false;
+            errEl.innerHTML = `${_ERR_SVG} ${e.message}`;
+        } else {
+            hideLoading();
+            toast('Change password failed: ' + e.message, 'error');
+        }
         console.error(e);
     }
 }
@@ -605,25 +629,12 @@ let _unlockContainer = null;
 const _failCounts = new Map(); // containerId → { count, lockUntil }
 
 function _startUnlockCooldown(c) {
-    const errEl = document.getElementById('unlock-error');
-    const btnEl = document.getElementById('btn-unlock');
-    let remaining = 3;
-    errEl.innerHTML = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.3"/><path d="M7 4v3.5l2.5 1.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg> Too many attempts — wait ${remaining}s`;
-    errEl.style.color = 'var(--orange)';
-    btnEl.disabled = true;
-    const timer = setInterval(() => {
-        remaining--;
-        if (remaining <= 0) {
-            clearInterval(timer);
-            const fails = _failCounts.get(c.id);
-            if (fails) fails.lockUntil = 0;
-            errEl.textContent = '';
-            errEl.style.color = '';
-            btnEl.disabled = false;
-        } else {
-            errEl.innerHTML = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.3"/><path d="M7 4v3.5l2.5 1.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg> Too many attempts — wait ${remaining}s`;
-        }
-    }, 1000);
+    const fails = _failCounts.get(c.id);
+    _startAttemptCooldown(
+        document.getElementById('unlock-error'),
+        document.getElementById('btn-unlock'),
+        () => { if (fails) fails.lockUntil = 0; }
+    );
 }
 
 function openUnlockView(c) {

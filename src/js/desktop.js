@@ -1389,16 +1389,20 @@ function _setupAreaDelegation(area, owner) {
     area.addEventListener('touchstart', e => {
         const el = e.target.closest('.file-item[data-id]');
         if (!el) return;
+        e.stopPropagation(); // prevent FW icon touch bubbling to parent Desktop handlers
         el._tsTime = Date.now(); el._tsMoved = false; el._tsIsTouch = true;
         _cancelHoverTooltip();
     }, { passive: true });
     area.addEventListener('touchmove', e => {
         const el = e.target.closest('.file-item[data-id]');
-        if (el) el._tsMoved = true;
+        if (!el) return;
+        el._tsMoved = true;
+        e.stopPropagation();
     }, { passive: true });
     area.addEventListener('touchend', e => {
         const el = e.target.closest('.file-item[data-id]');
         if (!el) return;
+        e.stopPropagation(); // prevent FW icon touch bubbling to parent Desktop handlers
         setTimeout(() => { el._tsIsTouch = false; }, 500);
         if (el._tsMoved || Date.now() - (el._tsTime || 0) > 350) return;
         e.preventDefault();
@@ -1493,6 +1497,8 @@ function _initAreaTouchRubberBand(area, owner) {
 
 /* ---- Compute max icon extent and set canvas size for both scrollbars ---- */
 function _syncAreaWidth(area) {
+    const canvas = area._canvas ?? (area._canvas = area.querySelector(':scope > .fw-canvas'));
+    if (!canvas) return; // Desktop has no fw-canvas — skip
     let maxRight = 0, maxBottom = 0;
     for (const el of (area._iconMap?.values() ?? area.querySelectorAll(':scope > .file-item'))) {
         const r = parseInt(el.style.left) + (el.offsetWidth || 96);
@@ -1500,12 +1506,8 @@ function _syncAreaWidth(area) {
         if (r > maxRight) maxRight = r;
         if (b > maxBottom) maxBottom = b;
     }
-    area.style.minWidth = '';
-    const canvas = area._canvas || (area._canvas = area.querySelector(':scope > .fw-canvas'));
-    if (canvas) {
-        canvas.style.width  = maxRight  > 0 ? (maxRight  + 24) + 'px' : '';
-        canvas.style.height = maxBottom > 0 ? (maxBottom + 24) + 'px' : '';
-    }
+    canvas.style.width  = maxRight  > 0 ? (maxRight  + 24) + 'px' : '';
+    canvas.style.height = maxBottom > 0 ? (maxBottom + 24) + 'px' : '';
 }
 
 /* ---- Shared touch-drag for icons (Desktop + FolderWindow) ----
@@ -2360,13 +2362,89 @@ function _buildIconMenuItems(node, sel, opts) {
     return items;
 }
 
+/* ---- Shared icon-area render (Desktop + FolderWindow): full rebuild or incremental ---- */
+function _renderIconArea(area, folderId, selection, updateStatusFn, forceRebuild) {
+    const items = VFS.children(folderId);
+    items.sort((a, b) => a.type !== b.type ? (a.type === 'folder' ? -1 : 1) : a.name.localeCompare(b.name));
+    area.classList.toggle('no-grid-dots', !_getSettings().gridDots);
+    const iconMap = area._iconMap || (area._iconMap = new Map());
+    const afterRender = () => {
+        updateStatusFn();
+        if (typeof _applyCutStyles !== 'undefined') _applyCutStyles();
+        _syncAreaWidth(area);
+    };
+    if (forceRebuild) {
+        iconMap.forEach(el => el.remove());
+        iconMap.clear();
+        if (!items.length) { afterRender(); return; }
+        const needPos = items.filter(n => !VFS.getPos(folderId, n.id));
+        if (needPos.length) VFS.autoPosBatch(folderId, needPos, area);
+        const useAnim = items.length <= 200;
+        const token = (area._renderToken = (area._renderToken || 0) + 1);
+        const renderChunk = (start) => {
+            if (area._renderToken !== token) return;
+            const frag = document.createDocumentFragment(),
+                end = Math.min(start + 300, items.length);
+            for (let i = start; i < end; i++) {
+                const n = items[i], pos = VFS.getPos(folderId, n.id) || { x: 8, y: 8 },
+                    div = _buildIconEl(n, pos);
+                if (selection.has(n.id)) div.classList.add('selected');
+                if (useAnim) div.style.animation = `iconPop 0.12s ease ${Math.min(i * 15, 200)}ms both`;
+                iconMap.set(n.id, div);
+                frag.appendChild(div);
+            }
+            area.appendChild(frag);
+            if (end < items.length) requestAnimationFrame(() => renderChunk(end));
+            else afterRender();
+        };
+        renderChunk(0);
+        // Immediate status/cut-styles refresh (visible before async chunks complete)
+        updateStatusFn();
+        if (typeof _applyCutStyles !== 'undefined') _applyCutStyles();
+    } else {
+        // Incremental: animate-out removed items, add new ones
+        const nodeMap = new Map(items.map(n => [n.id, n]));
+        iconMap.forEach((el, id) => {
+            if (!nodeMap.has(id)) {
+                if (!el.isConnected) { iconMap.delete(id); }
+                else {
+                    el.style.transition = 'opacity .1s, transform .1s';
+                    el.style.opacity = '0'; el.style.transform = 'scale(.85)';
+                    setTimeout(() => { el.remove(); iconMap.delete(id); }, 110);
+                }
+            }
+        });
+        const needPos = items.filter(n => !VFS.getPos(folderId, n.id));
+        if (needPos.length) VFS.autoPosBatch(folderId, needPos, area);
+        for (const [idx, n] of items.entries()) {
+            let existing = iconMap.get(n.id);
+            if (existing && !existing.isConnected) { iconMap.delete(n.id); existing = null; }
+            if (existing) {
+                const nameEl = existing.querySelector('.file-name');
+                if (nameEl && nameEl.textContent !== n.name) nameEl.textContent = n.name;
+                if (n.type === 'folder') {
+                    const thumbEl = existing.querySelector('.file-thumb.folder-icon');
+                    if (thumbEl) thumbEl.innerHTML = getFolderSVG(n.color);
+                }
+            } else {
+                const pos = VFS.getPos(folderId, n.id) || { x: 8, y: 8 },
+                    div = _buildIconEl(n, pos);
+                if (selection.has(n.id)) div.classList.add('selected');
+                div.style.animation = `iconPop 0.12s ease ${Math.min(idx * 15, 200)}ms both`;
+                iconMap.set(n.id, div);
+                area.appendChild(div);
+            }
+        }
+        afterRender();
+    }
+}
+
 /* ============================================================
    DESKTOP
    ============================================================ */
 const Desktop = {
     _desktopFolder: 'root',
     _sel: App.selection,   // main desktop's own selection (same reference as App.selection initially)
-    _renderToken: 0,       // cancels stale chunked renders on re-navigate
     // Unified interface aliases used by shared helpers (_setupAreaDelegation, _initAreaTouchRubberBand, _rubberBandSelect)
     get selection() { return this._sel; },
     get folderId() { return this._desktopFolder; },
@@ -2414,58 +2492,11 @@ const Desktop = {
     },
 
     _renderIcons() {
-        const area = document.getElementById('desktop-area');
-        const iconMap = area._iconMap || (area._iconMap = new Map());
-        // Clear current icons
-        iconMap.forEach(el => el.remove());
-        iconMap.clear();
-
-        const items = VFS.children(this._desktopFolder);
-        items.sort((a, b) => {
-            if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
-            return a.name.localeCompare(b.name);
-        });
-
-        if (!items.length) {
-            this._updateSelectionBar();
-            if (typeof _applyCutStyles !== 'undefined') _applyCutStyles();
-            return;
-        }
-
-        // Batch-assign positions for items that have none (one occupied-set build)
-        const needPos = items.filter(n => !VFS.getPos(this._desktopFolder, n.id));
-        if (needPos.length) VFS.autoPosBatch(this._desktopFolder, needPos, area);
-
-        // Chunks: first 300 items render immediately; rest via rAF to keep UI responsive
-        const pid = this._desktopFolder, sel = this._sel,
-            useAnim = items.length <= 200,
-            token = ++this._renderToken;
-
-        const renderChunk = (start) => {
-            if (this._renderToken !== token) return; // cancelled by re-render
-            const frag = document.createDocumentFragment(),
-                end = Math.min(start + 300, items.length);
-            for (let i = start; i < end; i++) {
-                const node = items[i],
-                    pos = VFS.getPos(pid, node.id) || { x: 8, y: 8 },
-                    div = _buildIconEl(node, pos);
-                if (sel.has(node.id)) div.classList.add('selected');
-                if (useAnim) div.style.animation = `iconPop 0.12s ease ${Math.min(i * 15, 200)}ms both`;
-                iconMap.set(node.id, div);
-                frag.appendChild(div);
-            }
-            area.appendChild(frag);
-            if (end < items.length) {
-                requestAnimationFrame(() => renderChunk(end));
-            } else {
-                this._updateSelectionBar();
-                if (typeof _applyCutStyles !== 'undefined') _applyCutStyles();
-            }
-        };
-
-        renderChunk(0);
-        this._updateSelectionBar();
-        if (typeof _applyCutStyles !== 'undefined') _applyCutStyles();
+        _renderIconArea(
+            document.getElementById('desktop-area'),
+            this._desktopFolder, this._sel,
+            () => this._updateSelectionBar(), true
+        );
     },
 
     // Incremental update: add new icons, remove gone ones, sync names — NO re-animation for existing
@@ -2473,47 +2504,11 @@ const Desktop = {
         App._winCtx = null;
         App.folder = this._desktopFolder;
         App.selection = this._sel;
-
-        const area = document.getElementById('desktop-area'),
-            nodes = VFS.children(this._desktopFolder),
-            nodeMap = new Map(nodes.map(n => [n.id, n]));
-
-        const iconMap = area._iconMap || (area._iconMap = new Map());
-
-        // Remove elements for nodes no longer in this folder
-        iconMap.forEach((el, id) => {
-            if (!nodeMap.has(id)) { el.remove(); iconMap.delete(id); }
-        });
-
-        // Batch-position items without a saved position
-        const needPos = nodes.filter(n => !VFS.getPos(this._desktopFolder, n.id));
-        if (needPos.length) VFS.autoPosBatch(this._desktopFolder, needPos, area);
-
-        // Add new icons; sync names/colors of existing ones (no re-animate existing)
-        for (const node of nodes) {
-            let existing = iconMap.get(node.id);
-            // Guard: stale iconMap entry (element removed from DOM without iconMap cleanup)
-            if (existing && !existing.isConnected) { iconMap.delete(node.id); existing = null; }
-            if (existing) {
-                const nameEl = existing.querySelector('.file-name');
-                if (nameEl && nameEl.textContent !== node.name) nameEl.textContent = node.name;
-                if (node.type === 'folder') {
-                    const thumbEl = existing.querySelector('.file-thumb.folder-icon');
-                    if (thumbEl) thumbEl.innerHTML = getFolderSVG(node.color);
-                }
-            } else {
-                const pos = VFS.getPos(this._desktopFolder, node.id) || { x: 8, y: 8 },
-                    div = _buildIconEl(node, pos);
-                if (this._sel.has(node.id)) div.classList.add('selected');
-                div.style.animation = 'iconPop 0.12s ease both';
-                iconMap.set(node.id, div);
-                area.appendChild(div);
-            }
-        }
-
-        this._updateSelectionBar();
-        if (typeof _applyCutStyles !== 'undefined') _applyCutStyles();
-        this.updateTaskbar();
+        _renderIconArea(
+            document.getElementById('desktop-area'),
+            this._desktopFolder, this._sel,
+            () => { this._updateSelectionBar(); this.updateTaskbar(); }, false
+        );
         if (typeof WinManager !== 'undefined') WinManager.renderAll();
     },
 
@@ -2997,101 +2992,7 @@ class FolderWindow {
         const area = this.el.querySelector('.fw-area'),
             folderChanged = this._renderedFolderId !== this.folderId;
         this._renderedFolderId = this.folderId;
-        // Sync grid-dots setting (new window might not have the class applied yet)
-        area.classList.toggle('no-grid-dots', !_getSettings().gridDots);
-
-        const items = VFS.children(this.folderId);
-        items.sort((a, b) => {
-            if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
-            return a.name.localeCompare(b.name);
-        });
-
-        if (folderChanged) {
-            const iconMap = area._iconMap || (area._iconMap = new Map());
-            iconMap.forEach(el => el.remove());
-            iconMap.clear();
-
-            // Batch-position unpositioned items
-            const needPos = items.filter(n => !VFS.getPos(this.folderId, n.id));
-            if (needPos.length) VFS.autoPosBatch(this.folderId, needPos, area);
-
-            const useAnim = items.length <= 200;
-            const token = (area._renderToken = (area._renderToken || 0) + 1);
-
-            const renderChunk = (start) => {
-                if (area._renderToken !== token) return;
-                const frag = document.createDocumentFragment(),
-                    end = Math.min(start + 300, items.length);
-                for (let i = start; i < end; i++) {
-                    const n = items[i],
-                        pos = VFS.getPos(this.folderId, n.id) || { x: 8, y: 8 },
-                        div = this._makeIcon(n, pos, useAnim ? i : -1);
-                    iconMap.set(n.id, div);
-                    frag.appendChild(div);
-                }
-                area.appendChild(frag);
-                if (end < items.length) {
-                    requestAnimationFrame(() => renderChunk(end));
-                } else {
-                    this._updateStatus();
-                    if (typeof _applyCutStyles !== 'undefined') _applyCutStyles();
-                    _syncAreaWidth(area);
-                }
-            };
-            renderChunk(0);
-        } else {
-            const iconMap = area._iconMap || (area._iconMap = new Map()),
-                nodeMap = new Map(items.map(n => [n.id, n]));
-            // Animate out removed items
-            iconMap.forEach((el, id) => {
-                if (!nodeMap.has(id)) {
-                    if (!el.isConnected) {
-                        iconMap.delete(id); // already detached — immediate cleanup
-                    } else {
-                        el.style.transition = 'opacity .1s, transform .1s';
-                        el.style.opacity = '0'; el.style.transform = 'scale(.85)';
-                        setTimeout(() => { el.remove(); iconMap.delete(id); }, 110);
-                    }
-                }
-            });
-            // Batch-position new items
-            const needPos = items.filter(n => !VFS.getPos(this.folderId, n.id));
-            if (needPos.length) VFS.autoPosBatch(this.folderId, needPos, area);
-
-            for (const [idx, n] of items.entries()) {
-                let existing = iconMap.get(n.id);
-                if (existing && !existing.isConnected) { iconMap.delete(n.id); existing = null; }
-                if (existing) {
-                    const nameEl = existing.querySelector('.file-name');
-                    if (nameEl && nameEl.textContent !== n.name) nameEl.textContent = n.name;
-                    if (n.type === 'folder') {
-                        const thumbEl = existing.querySelector('.file-thumb.folder-icon');
-                        if (thumbEl) thumbEl.innerHTML = getFolderSVG(n.color);
-                    }
-                } else {
-                    const pos = VFS.getPos(this.folderId, n.id) || { x: 8, y: 8 },
-                        div = this._makeIcon(n, pos, idx);
-                    iconMap.set(n.id, div);
-                    area.appendChild(div);
-                }
-            }
-        }
-
-        this._updateStatus();
-        if (typeof _applyCutStyles !== 'undefined') _applyCutStyles();
-        // Sync grid dots setting with this window
-        const s = _getSettings();
-        area.classList.toggle('no-grid-dots', !s.gridDots);
-        _syncAreaWidth(area);
-    }
-
-    /* ---- MAKE ICON (for this window) ---- */
-    _makeIcon(node, pos, idx = 0) {
-        const div = _buildIconEl(node, pos);
-        if (this.selection.has(node.id)) div.classList.add('selected');
-        // idx >= 0: animate with stagger; idx < 0: no animation (large batches)
-        if (idx >= 0) div.style.animation = `iconPop 0.12s ease ${Math.min(idx * 15, 200)}ms both`;
-        return div;
+        _renderIconArea(area, this.folderId, this.selection, () => this._updateStatus(), folderChanged);
     }
 
     /* ---- ICON DRAG (within window + escape to desktop/other windows) ---- */

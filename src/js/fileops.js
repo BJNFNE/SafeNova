@@ -1173,35 +1173,60 @@ async function exportAsZip(nodeIds, zipName) {
 
 // _buf2b64Safe removed — buf2b64 is now chunked and equivalent
 
+/** Brute-force attempt tracker for export password prompts */
+const _expFailCounts = new Map();
+
 /** Prompt for password to derive the container key before exporting a locked container */
 function _askExportPassword(c) {
     return new Promise(resolve => {
+        const expKey = 'exp:' + c.id;
+        const errEl = document.getElementById('exp-error');
+        const btnOk = document.getElementById('exp-ok');
         document.getElementById('exp-cont-name').textContent = c.name;
         document.getElementById('exp-pw').value = '';
-        document.getElementById('exp-error').textContent = '';
-        document.getElementById('exp-ok').disabled = false;
+        errEl.innerHTML = '';
+        errEl.style.color = '';
+        btnOk.disabled = false;
+
+        const prevFails = _expFailCounts.get(expKey);
+        if (prevFails?.lockUntil > Date.now()) {
+            _startAttemptCooldown(errEl, btnOk, () => { if (prevFails) prevFails.lockUntil = 0; });
+        }
+
         Overlay.show('modal-export-pw');
         setTimeout(() => document.getElementById('exp-pw').focus(), 100);
 
         const cleanup = () => {
             Overlay.hide();
-            document.getElementById('exp-ok').onclick = null;
+            btnOk.onclick = null;
             document.getElementById('exp-cancel').onclick = null;
             document.getElementById('exp-close').onclick = null;
             document.getElementById('exp-pw').onkeydown = null;
         };
 
         const doExport = async () => {
+            const fails = _expFailCounts.get(expKey) || { count: 0, lockUntil: 0 };
+            if (fails.lockUntil > Date.now()) return;
             const pw = document.getElementById('exp-pw').value;
-            const errEl = document.getElementById('exp-error');
-            if (!pw) { errEl.textContent = 'Enter password'; return; }
-            errEl.textContent = '';
-            const btnOk = document.getElementById('exp-ok');
+            if (!pw) { errEl.innerHTML = _ERR_SVG + ' Enter password'; return; }
+            errEl.innerHTML = '';
             btnOk.disabled = true;
             try {
                 const key = await Crypto.deriveKey(pw, new Uint8Array(c.salt)),
                     ok = await Crypto.checkVerification(key, c.verIv, c.verBlob);
-                if (!ok) { errEl.textContent = 'Incorrect password'; btnOk.disabled = false; return; }
+                if (!ok) {
+                    fails.count++;
+                    _expFailCounts.set(expKey, fails);
+                    if (fails.count > 3) {
+                        fails.lockUntil = Date.now() + 3000;
+                        _startAttemptCooldown(errEl, btnOk, () => { fails.lockUntil = 0; });
+                    } else {
+                        errEl.innerHTML = _ERR_SVG + ' Incorrect password';
+                        btnOk.disabled = false;
+                    }
+                    return;
+                }
+                _expFailCounts.delete(expKey);
                 cleanup();
                 resolve(key);
             } catch (e) {
@@ -1210,7 +1235,7 @@ function _askExportPassword(c) {
             }
         };
 
-        document.getElementById('exp-ok').onclick = doExport;
+        btnOk.onclick = doExport;
         document.getElementById('exp-cancel').onclick = () => { cleanup(); resolve(null); };
         document.getElementById('exp-close').onclick = () => { cleanup(); resolve(null); };
         document.getElementById('exp-pw').onkeydown = e => { if (e.key === 'Enter') doExport(); };

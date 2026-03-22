@@ -109,6 +109,28 @@ function escHtml(str) {
         .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+/* Shared error/cooldown SVG fragments reused across all password forms */
+const _ERR_SVG  = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 1.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13zM7.25 5h1.5v4h-1.5V5zm0 5h1.5v1.5h-1.5V10z" fill="currentColor"/></svg>';
+const _WAIT_SVG = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.3"/><path d="M7 4v3.5l2.5 1.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
+
+/* Shared brute-force cooldown — disables btn and shows 3-second countdown in errEl */
+function _startAttemptCooldown(errEl, btn, onClear) {
+    let remaining = 3;
+    const upd = s => { errEl.innerHTML = `${_WAIT_SVG} Too many attempts — wait ${s}s`; errEl.style.color = 'var(--orange)'; };
+    upd(remaining);
+    btn.disabled = true;
+    const _t = setInterval(() => {
+        if (--remaining <= 0) {
+            clearInterval(_t);
+            errEl.innerHTML = ''; errEl.style.color = '';
+            btn.disabled = false;
+            onClear?.();
+        } else {
+            upd(remaining);
+        }
+    }, 1000);
+}
+
 /* ============================================================
    FOLDER COLOR PALETTE
    ============================================================ */
