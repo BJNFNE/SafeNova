@@ -294,3 +294,19 @@ If auto-repair cannot fix the remaining issues, a **Deep Clean** option becomes 
 5. Clean storage records — remove orphaned DB entries in a single batch transaction
 
 After Deep Clean, a verification scan runs automatically. A backup is offered before Deep Clean runs, same as for auto-repair.
+
+---
+
+## 💬 Community
+
+Have questions, ideas, or just want to chat? Here's where to find us:
+
+-   **GitHub Issues**: Report bugs or request features via [Issues](https://github.com/DosX-dev/SafeNova/issues)
+
+---
+
+## 🤝 Thanks to all contributors
+
+<a href="https://github.com/DosX-dev/SafeNova/graphs/contributors">
+<img src="https://readme-contribs.as93.net/contributors/DosX-dev/SafeNova?textColor=737373&perRow=9&shape=squircle&isResponsive=true" />
+</a>
