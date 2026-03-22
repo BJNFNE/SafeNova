@@ -23,7 +23,8 @@ Key properties:
 -   **File operations** — upload (drag & drop or browse; folder upload with 4× parallel encryption), download, copy, cut, paste, rename, delete
 -   **Built-in viewers** — text editor, image viewer, audio/video player, PDF viewer
 -   **Hardware key support** — optionally use a WebAuthn passkey to strengthen the container salt
--   **Session memory** — optionally remember your session per tab or per browser
+-   **Session memory** — optionally remember your session per tab (ephemeral, recommended) or persistently until manually signed out, using AES-GCM-encrypted session tokens; persistent sessions survive browser restarts
+-   **Cross-tab session protection** — a container can only be actively open in one browser tab at a time; a lightweight lock protocol detects conflicts and offers instant session takeover
 -   **Container import / export** — portable `.safenova` container files
 -   **Export password guard** — configurable setting (on by default) to require password confirmation before exporting; when disabled, active-session key is used directly
 -   **Sort & arrange** — sort icons by name, date, size, or type; drag to custom positions
@@ -36,14 +37,42 @@ Key properties:
 
 ## 🔐 Encryption
 
-| Layer           | Algorithm                                       |
-| --------------- | ----------------------------------------------- |
-| Key derivation  | Argon2id (19 MB memory, 2 iterations, 1 thread) |
-| File encryption | AES-256-GCM (random 12-byte IV per file)        |
-| VFS encryption  | AES-256-GCM (same key as files)                 |
-| Integrity check | AES-256-GCM verification blob on unlock         |
+| Layer           | Algorithm                                              |
+| --------------- | ------------------------------------------------------ |
+| Key derivation  | Argon2id (19 MB memory, 2 iterations, 1 thread)        |
+| File encryption | AES-256-GCM (random 96-bit IV per file)                |
+| VFS encryption  | AES-256-GCM (same key, independent IV)                 |
+| Session tokens  | AES-256-GCM, dual-key: per-tab ephemeral or persistent |
+| Integrity check | AES-256-GCM verification blob authenticated on open    |
 
-Every file is encrypted individually. The virtual filesystem structure is also encrypted as a separate blob. The plaintext password is never stored — only the derived key is held in memory during an active session.
+Every file is encrypted individually — each with its own freshly generated IV. The virtual filesystem (folder tree, file names, sizes, positions) is encrypted as a separate blob using the same derived key. The plaintext password is never stored; only the derived key is held in JavaScript memory for the duration of an active session.
+
+File keys are derived from passwords through **Argon2id** with OWASP-recommended minimum parameters (19 MB memory cost, 2 iterations), providing strong resistance against brute-force and GPU-accelerated attacks.
+
+### Session token security
+
+SafeNova uses a **dual-key model** for session storage — an ephemeral per-tab key and a persistent shared key — each scoped to a distinct user intent.
+
+#### Current tab session _(Recommended)_
+
+The 32-byte Argon2id key material is encrypted with **`snv-sk`** — a per-tab AES-256-GCM key stored in `sessionStorage`. This means:
+
+-   The session blob (`snv-s-{cid}`) lives in `sessionStorage` and is readable only by the exact tab that created it
+-   Closing the tab permanently destroys `snv-sk` — no residue remains in any persistent storage
+-   An attacker with access to `localStorage` or disk snapshots gains nothing, because the decryption key exists only in volatile `sessionStorage`
+
+This is the recommended option: the session is automatically gone as soon as the tab is closed.
+
+#### Stay signed in
+
+The key material is encrypted with **`snv-bsk`** — a shared AES-256-GCM key stored in `localStorage`. All tabs of the same browser origin share this key, so:
+
+-   Any tab can resume the session without re-entering the password
+-   **The session survives browser restarts** — closing the browser and reopening it does not end the session
+-   The session expires after **7 days** (TTL baked into the encrypted payload), or immediately when the user explicitly signs out from within the app
+-   Clearing browser site data removes both `snv-bsk` and all persistent session blobs
+
+**Security trade-off:** both `snv-bsk` and the session blob (`snv-sb-{cid}`) reside in `localStorage`. An attacker with read access to `localStorage` — for example via disk imaging or malware on an unattended machine — can decrypt the stored key material. Choose this option only on a trusted personal device.
 
 ---
 
@@ -108,9 +137,79 @@ SafeNova/
 2. **Unlock** the container — Argon2id derives the key from your password
 3. Files you upload are encrypted with AES-256-GCM before being saved to IndexedDB
 4. The virtual filesystem (folder tree + icon positions) is also encrypted and saved separately
-5. **Lock** the container — the key is wiped from memory
+5. **Lock** the container — the derived key is immediately wiped from memory
 
 All container data is scoped to the current browser and device. Use **Export Container** to back up or transfer to another device.
+
+---
+
+## 📄 The `.safenova` Container Format
+
+Exported containers are saved as `.safenova` files. This is a **self-contained structured archive** with a versioned, deterministic layout. It is designed so that no file content or filesystem metadata is ever present in plaintext within the archive.
+
+### Archive sections
+
+| Section                      | Role                                                                                                                                                                                              |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `container.xml`              | Plaintext container manifest: name, creation timestamp, Argon2id salt, and the AES-GCM verification IV and blob needed to authenticate a password at import. No file names or content appear here |
+| `meta/0`                     | The IV (initialization vector) used to encrypt the VFS blob                                                                                                                                       |
+| `meta/1`                     | The encrypted VFS blob — the complete folder hierarchy, file names, MIME types, sizes, timestamps, icon positions, and folder colors, all ciphertext                                              |
+| `meta/2`                     | The IV for the encrypted file manifest                                                                                                                                                            |
+| `meta/3`                     | The encrypted file manifest — a JSON structure mapping each file’s internal ID to its byte offset and length within `workspace.bin`, encrypted with the container key                             |
+| `safenova_efs/workspace.bin` | A single contiguous block of raw ciphertext — the encrypted content of every file, concatenated end-to-end. Without the decryption key, file boundaries and content are indistinguishable         |
+| `meta/activity_logs/0`       | _(Optional)_ The encrypted activity log, included only when the `exportWithLogs` container setting is enabled                                                                                     |
+
+### Design properties
+
+**Zero plaintext leakage.** The only identifiable plaintext in the archive is the container name in `container.xml` and the Argon2id salt. All file names, folder structure, and content are ciphertext.
+
+**Lazy import.** A `.safenova` file can be imported without entering the container password. The encrypted workspace is stored as-is internally, flagged as a `lazyWorkspace`. It is expanded into the local database only on first unlock — so import is instantaneous regardless of container size.
+
+**Self-authenticating.** The salt and verification blob in `container.xml` allow the application to confirm the correctness of a supplied password before touching any file data, preventing unnecessary decryption work.
+
+**Versioned.** The `version` attribute in the XML manifest distinguishes between format generations, enabling forward-compatible import logic. Currently only version 3 is supported; earlier formats have been retired.
+
+---
+
+## ⚡ Performance
+
+SafeNova schedules AES-GCM operations to run with maximum concurrency, taking full advantage of hardware AES acceleration exposed by the browser’s Web Crypto API.
+
+### Adaptive concurrency
+
+The degree of parallelism is computed once at startup:
+
+```js
+const _CRYPTO_CONCURRENCY = Math.min(8, navigator.hardwareConcurrency || 4);
+```
+
+This serves as the default batch width for all bulk encrypt/decrypt loops. On an 8-core machine, up to 8 files are processed simultaneously.
+
+### Bulk upload
+
+For each batch of files the application reads all `ArrayBuffer` payloads in parallel, encrypts the batch in parallel, then writes every encrypted record to IndexedDB in a **single transaction**, eliminating the per-file transaction overhead that would otherwise dominate for large numbers of small files.
+
+### ZIP export
+
+Exporting files as an archive uses `DB.getFilesByIds()` — a single IndexedDB read transaction that fetches all required records concurrently via parallel `IDBObjectStore.get()` calls. Decryption of all records is then dispatched in one `Promise.allSettled` call rather than being serialised through fixed-size batches.
+
+### Password change
+
+Re-encrypting a container under a new key dispatches all `decrypt → encrypt` pairs for every file **fully in parallel**. Results are accumulated and written back in a single `saveFiles()` batch, reducing total elapsed time from `O(n × sequential awaits)` to approximately one parallel round-trip plus one database write.
+
+### Container export
+
+Assembly of `workspace.bin` is performed with a **single pre-allocated `Uint8Array`** and sequential `TypedArray.set()` calls, avoiding repeated allocations and intermediate staging arrays.
+
+---
+
+## 🛡️ Cross-Tab Session Protection
+
+To prevent a container from being open in two browser tabs simultaneously — which would risk conflicting VFS writes — SafeNova maintains a lightweight **session lock** in `localStorage`.
+
+When a container is unlocked, the tab writes a claim entry (`snv-open-{id}`) containing its unique tab identifier and a timestamp. A **heartbeat** refreshes the timestamp every 5 seconds. Any other tab that reads a live claim (timestamp within the 30-second TTL) before opening the same container is shown a conflict dialog offering to take over the session.
+
+On accepting the takeover, the requesting tab writes a **kick flag** into the claim entry. The original tab listens for `storage` events on this key and immediately locks itself when the flag is detected. On normal tab close, `beforeunload` and `pagehide` remove the claim entry so the container becomes available to other tabs without waiting for the TTL to expire.
 
 ---
 
