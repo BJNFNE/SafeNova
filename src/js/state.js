@@ -12,6 +12,14 @@
      is gone → any localStorage blobs become undecryptable.
    • An attacker who dumps only localStorage cannot recover
      passwords without also reading the current sessionStorage.
+
+   Cross-tab behaviour:
+   • snv-sk is per-tab (sessionStorage). A browser-scope blob in
+     localStorage can only be decrypted by the tab that wrote it.
+   • loadSession() does NOT destroy the browser-scope blob on
+     decrypt failure — it may simply belong to another tab.
+   • hasSession() reflects raw blob presence (cross-tab) so the
+     session badge stays visible in any tab.
    ============================================================ */
 let _sessionKey = null;
 
@@ -62,7 +70,9 @@ async function saveSession(cid, rawKeyBytes, scope) {
 
 // Returns Uint8Array(32) raw key bytes on success, or null on failure/expiry
 async function loadSession(cid) {
-    const b64 = sessionStorage.getItem('snv-s-' + cid) || localStorage.getItem('snv-sb-' + cid);
+    const tabBlob    = sessionStorage.getItem('snv-s-'  + cid);
+    const browserBlob = localStorage.getItem('snv-sb-' + cid);
+    const b64 = tabBlob || browserBlob;
     if (!b64) return null;
     try {
         const key = await _getOrCreateSessionKey(),
@@ -75,7 +85,17 @@ async function loadSession(cid) {
         const expiry = Number(new DataView(payload.buffer).getBigUint64(0, true));
         if (Date.now() > expiry) { clearSession(cid); return null; }
         return payload.slice(8); // 32-byte raw key material
-    } catch { clearSession(cid); return null; }
+    } catch {
+        // Decryption failure — two possible reasons:
+        //   1. Tab-scope blob (snv-s-): lives in THIS tab's sessionStorage, so we own it.
+        //      Corrupted or replaced → safe to clear.
+        //   2. Browser-scope blob (snv-sb-): encrypted with ANOTHER tab's snv-sk.
+        //      We cannot and must not remove it — it's a valid remembered session for
+        //      the owning tab.  Leave it alone; it will expire via the 7-day TTL or be
+        //      replaced when that tab saves a new session.
+        if (tabBlob) sessionStorage.removeItem('snv-s-' + cid);
+        return null;
+    }
 }
 
 function clearSession(cid) {
@@ -85,6 +105,55 @@ function clearSession(cid) {
 
 function hasSession(cid) {
     return !!(sessionStorage.getItem('snv-s-' + cid) || localStorage.getItem('snv-sb-' + cid));
+}
+
+/* ============================================================
+   TAB SESSION GUARD
+   Prevents the same container from being opened in two tabs
+   simultaneously. Uses localStorage for cross-tab visibility
+   and a heartbeat to detect stale (dead tab) claims.
+   ============================================================ */
+const _OPEN_TTL = 30000; // consider stale after 6 missed heartbeats (heartbeat = 5 s)
+let _sessionHeartbeat = null;
+
+function _openKey(cid) { return 'snv-open-' + cid; }
+
+/** Returns true if another live tab currently has this container open. */
+function _checkContainerSession(cid) {
+    try {
+        const raw = localStorage.getItem(_openKey(cid));
+        if (!raw) return false;
+        const d = JSON.parse(raw);
+        return !!(d && d.tab !== _TAB_ID && (Date.now() - d.ts) < _OPEN_TTL);
+    } catch { return false; }
+}
+
+/** Claim the container session for this tab and start heartbeat. */
+function _startContainerSession(cid) {
+    const write = () => localStorage.setItem(_openKey(cid), JSON.stringify({ tab: _TAB_ID, ts: Date.now() }));
+    write();
+    if (_sessionHeartbeat) clearInterval(_sessionHeartbeat);
+    _sessionHeartbeat = setInterval(() => {
+        if (App.container?.id === cid) write(); else _stopContainerSession(cid);
+    }, 5000);
+}
+
+/** Release the container session claim for this tab. */
+function _stopContainerSession(cid) {
+    if (_sessionHeartbeat) { clearInterval(_sessionHeartbeat); _sessionHeartbeat = null; }
+    if (!cid) return;
+    try {
+        const raw = localStorage.getItem(_openKey(cid));
+        if (raw) {
+            const d = JSON.parse(raw);
+            if (d.tab === _TAB_ID) localStorage.removeItem(_openKey(cid));
+        }
+    } catch { localStorage.removeItem(_openKey(cid)); }
+}
+
+/** Force-claim: writes kick flag → causes the other tab to lock itself via storage event. */
+function _forceClaimSession(cid) {
+    localStorage.setItem(_openKey(cid), JSON.stringify({ tab: _TAB_ID, ts: Date.now(), kick: true }));
 }
 
 /* ============================================================
@@ -137,6 +206,7 @@ const App = {
     // Return to home WITHOUT killing the session (password stays remembered)
     async backToMenu() {
         document.title = 'SafeNova';
+        if (this.container?.id) _stopContainerSession(this.container.id);
         this.key = null;
         this.container = null;
         this.folder = 'root';
@@ -159,7 +229,7 @@ const App = {
     async lockContainer() {
         document.title = 'SafeNova';
         const cid = this.container?.id;
-        if (cid) clearSession(cid);
+        if (cid) { _stopContainerSession(cid); clearSession(cid); }
         this.key = null;
         this.container = null;
         this.folder = 'root';

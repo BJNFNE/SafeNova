@@ -26,6 +26,19 @@ function uid() {
         : Date.now().toString(36) + Math.random().toString(36).slice(2);
 }
 
+/* ============================================================
+   TAB IDENTITY
+   Each browser tab gets a stable UUID so we can detect when
+   the same container is being opened in two different tabs.
+   Stored in sessionStorage so a page refresh keeps the same ID,
+   while a brand-new tab always gets a fresh one.
+   ============================================================ */
+const _TAB_ID = (() => {
+    let id = sessionStorage.getItem('snv-tab-id');
+    if (!id) { id = uid(); sessionStorage.setItem('snv-tab-id', id); }
+    return id;
+})();
+
 function fmtSize(b) {
     if (b === 0) return '0 B';
     const k = 1024, s = ['B', 'KB', 'MB', 'GB', 'TB'];

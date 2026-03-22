@@ -283,3 +283,35 @@ window.addEventListener('DOMContentLoaded', async () => {
     initEvents();
     await App.init();
 });
+
+/* ============================================================
+   CROSS-TAB SESSION GUARD
+   ============================================================ */
+// When another tab claims (or force-kicks) our container, lock immediately.
+window.addEventListener('storage', e => {
+    // ── Kick: another tab force-claimed our container ──────────
+    if (App.container && e.key === 'snv-open-' + App.container.id) {
+        try {
+            const d = e.newValue ? JSON.parse(e.newValue) : null;
+            if (d && d.tab !== _TAB_ID && d.kick) {
+                App.lockContainer();
+                toast('This container was opened in another tab — session ended.', 'warn');
+            }
+        } catch { /* ignore corrupt value */ }
+    }
+
+    // ── Session badge live-update: any session blob change ─────
+    // When another tab saves or clears a remembered session, refresh the home
+    // view so the "Session active" badge is immediately up-to-date.
+    if (App.view === 'home' && e.key && (e.key.startsWith('snv-sb-') || e.key.startsWith('snv-s-'))) {
+        Home.render();
+    }
+});
+
+// Release the session claim on tab close / navigation.
+// Both beforeunload (desktop) and pagehide (mobile / bfcache) are needed.
+function _onTabUnload() {
+    if (App.container?.id) _stopContainerSession(App.container.id);
+}
+window.addEventListener('beforeunload', _onTabUnload);
+window.addEventListener('pagehide', _onTabUnload);

@@ -176,12 +176,7 @@ const Home = {
 
         card.addEventListener('click', async e => {
             if (e.target.closest('.container-card-menu') || e.target.closest('.container-drag-handle')) return;
-            const savedPw = await loadSession(c.id);
-            if (savedPw) {
-                _resumeSession(c, savedPw);
-            } else {
-                openUnlockView(c);
-            }
+            _tryOpenContainer(c);
         });
         card.querySelector('.container-card-menu').addEventListener('click', e => {
             e.stopPropagation();
@@ -202,10 +197,7 @@ function showContainerMenu(e, c) {
     items.push({
         label: 'Open', icon: Icons.unlock,
         _keyHint: !hasSess ? '<span class="auth-dot"></span>' : null,
-        action: async () => {
-            const savedPw = await loadSession(c.id);
-            if (savedPw) _resumeSession(c, savedPw); else openUnlockView(c);
-        }
+        action: () => _tryOpenContainer(c)
     });
     items.push({ sep: true });
 
@@ -244,6 +236,11 @@ function showContainerMenu(e, c) {
 
 /* ---- Kill Session ---- */
 function killSession(c) {
+    // Notify any tab that has this container open — they will call lockContainer() via the
+    // storage event listener.  forceClaimSession writes kick=true; we then immediately clean
+    // up the claim entry (we're on the home page, not opening this container ourselves).
+    _forceClaimSession(c.id);
+    _stopContainerSession(c.id); // removes the kick entry we just wrote
     clearSession(c.id);
     toast(`Session for "${c.name}" terminated`, 'info');
     Home.render();
@@ -666,6 +663,40 @@ function openUnlockView(c) {
     setTimeout(() => document.getElementById('unlock-pw').focus(), 100);
 }
 
+// ── Tab deduplication guard ───────────────────────────────────
+
+/** Show the session-conflict modal; `onConfirm` is called if the user
+ *  chooses to force-close the other session. */
+function _showSessionConflict(c, onConfirm) {
+    document.getElementById('sc-cont-name').textContent = c.name;
+    document.getElementById('sc-force').onclick = () => {
+        _forceClaimSession(c.id);
+        Overlay.hide();
+        onConfirm?.();
+    };
+    document.getElementById('sc-cancel').onclick = () => Overlay.hide();
+    Overlay.show('modal-session-conflict');
+}
+
+/**
+ * Single entry point for opening any container.
+ * Checks for cross-tab conflict FIRST (before any password prompt),
+ * then resumes an existing session or shows the unlock view.
+ */
+async function _tryOpenContainer(c) {
+    if (_checkContainerSession(c.id)) {
+        _showSessionConflict(c, async () => {
+            // Other tab has been kicked — proceed with open
+            const savedPw = await loadSession(c.id);
+            if (savedPw) _resumeSession(c, savedPw); else openUnlockView(c);
+        });
+        return;
+    }
+    const savedPw = await loadSession(c.id);
+    if (savedPw) _resumeSession(c, savedPw); else openUnlockView(c);
+}
+// ────────────────────────────────────────────────────────────────
+
 async function doUnlock() {
     const c = _unlockContainer; if (!c) return;
     const pw = document.getElementById('unlock-pw').value;
@@ -741,6 +772,7 @@ async function doUnlock() {
         App.key = key;
         App.folder = 'root';
         App.selection.clear();
+        _startContainerSession(_activeCont.id);
         App.showView('desktop');
         if (typeof _applySettings === 'function') _applySettings(_getSettings(), true);
         if (typeof _resetAutoLockTimer === 'function') _resetAutoLockTimer();
@@ -843,6 +875,7 @@ async function _resumeSession(c, rawKeyBytes) {
         App.key = key;
         App.folder = 'root';
         App.selection.clear();
+        _startContainerSession(c.id);
         App.showView('desktop');
         if (typeof _applySettings === 'function') _applySettings(_getSettings(), true);
         if (typeof _resetAutoLockTimer === 'function') _resetAutoLockTimer();
