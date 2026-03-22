@@ -42,7 +42,9 @@ Key properties:
 | Key derivation  | Argon2id (19 MB memory, 2 iterations, 1 thread)        |
 | File encryption | AES-256-GCM (random 96-bit IV per file)                |
 | VFS encryption  | AES-256-GCM (same key, independent IV)                 |
-| Session tokens  | AES-256-GCM, dual-key: per-tab ephemeral or persistent || Browser key wrap   | HKDF-SHA-256 from browser fingerprint, never stored   || Integrity check | AES-256-GCM verification blob authenticated on open    |
+| Session tokens   | AES-256-GCM, dual-key: per-tab ephemeral or persistent |
+| Browser key wrap | HKDF-SHA-256 from browser fingerprint, never stored    |
+| Integrity check  | AES-256-GCM verification blob authenticated on open    |
 
 Every file is encrypted individually — each with its own freshly generated IV. The virtual filesystem (folder tree, file names, sizes, positions) is encrypted as a separate blob using the same derived key. The plaintext password is never stored; only the derived key is held in JavaScript memory for the duration of an active session.
 
@@ -66,7 +68,9 @@ This is the recommended option: the session is automatically gone as soon as the
 
 The key material is encrypted with **`snv-bsk`** — a shared AES-256-GCM key available to all tabs of the same browser origin.
 
-**Browser-fingerprint key wrapping.** Before `snv-bsk` is written to `localStorage`, it is itself encrypted with a separate *wrap key* that is derived on-the-fly via **HKDF-SHA-256** from a browser fingerprint and **never stored anywhere**:
+#### Browser-fingerprint key wrapping
+
+Before `snv-bsk` is written to `localStorage`, it is itself encrypted with a separate *wrap key* that is derived on-the-fly via **HKDF-SHA-256** from a browser fingerprint and **never stored anywhere**:
 
 ```
 fingerprint = origin \0 language \0 hardwareConcurrency \0 colorDepth \0 pixelDepth
@@ -83,9 +87,13 @@ Consequences:
 -   **Legacy format migration:** `snv-bsk` entries written before fingerprint-wrapping was introduced (raw 32-byte keys, no IV prefix) are detected by their exact byte length and silently re-wrapped in the current `IV(12) || AES-GCM` format on first access — no user action required
 -   The session expires after **7 days** (TTL baked into the encrypted payload), or immediately on explicit sign-out
 
-**Session payload format.** Both scope types use the same blob layout: `IV(12) || AES-256-GCM(scope_key, expiry(8 bytes, uint64 LE) || raw_key(32 bytes))`. The AES-GCM call is authenticated with the container ID as additional data (`snv-session:{cid}`), preventing a blob from one container from being replayed to unlock a different container. Tab-scope sessions use `expiry = Number.MAX_SAFE_INTEGER` (no TTL — the tab's `sessionStorage` is the only lifetime bound); browser-scope sessions carry a hard 7-day expiry.
+#### Session payload format
 
-**Remaining trade-off:** an attacker with live access to the running browser process (e.g. malicious extension, XSS) can still call the same fingerprint function and derive the wrap key. The browser-fingerprint layer protects against *offline* credential theft (disk images, direct `localStorage` dumps), not against in-browser code execution.
+Both scope types use the same blob layout: `IV(12) || AES-256-GCM(scope_key, expiry(8 bytes, uint64 LE) || raw_key(32 bytes))`. The AES-GCM call is authenticated with the container ID as additional data (`snv-session:{cid}`), preventing a blob from one container from being replayed to unlock a different container. Tab-scope sessions use `expiry = Number.MAX_SAFE_INTEGER` (no TTL — the tab's `sessionStorage` is the only lifetime bound); browser-scope sessions carry a hard 7-day expiry.
+
+#### Remaining trade-off
+
+An attacker with live access to the running browser process (e.g. malicious extension, XSS) can still call the same fingerprint function and derive the wrap key. The browser-fingerprint layer protects against *offline* credential theft (disk images, direct `localStorage` dumps), not against in-browser code execution.
 
 ---
 
@@ -174,13 +182,21 @@ Exported containers are saved as `.safenova` files. This is a **self-contained s
 
 ### Design properties
 
-**Zero plaintext leakage.** The only identifiable plaintext in the archive is the container name in `container.xml` and the Argon2id salt. All file names, folder structure, and content are ciphertext.
+#### Zero plaintext leakage
 
-**Lazy import.** A `.safenova` file can be imported without entering the container password. The encrypted workspace is stored as-is internally, flagged as a `lazyWorkspace`. It is expanded into the local database only on first unlock — so import is instantaneous regardless of container size.
+The only identifiable plaintext in the archive is the container name in `container.xml` and the Argon2id salt. All file names, folder structure, and content are ciphertext.
 
-**Self-authenticating.** The salt and verification blob in `container.xml` allow the application to confirm the correctness of a supplied password before touching any file data, preventing unnecessary decryption work.
+#### Lazy import
 
-**Versioned.** The `version` attribute in the XML manifest distinguishes between format generations, enabling forward-compatible import logic. Currently only version 3 is supported; earlier formats have been retired.
+A `.safenova` file can be imported without entering the container password. The encrypted workspace is stored as-is internally, flagged as a `lazyWorkspace`. It is expanded into the local database only on first unlock — so import is instantaneous regardless of container size.
+
+#### Self-authenticating
+
+The salt and verification blob in `container.xml` allow the application to confirm the correctness of a supplied password before touching any file data, preventing unnecessary decryption work.
+
+#### Versioned
+
+The `version` attribute in the XML manifest distinguishes between format generations, enabling forward-compatible import logic. Currently only version 3 is supported; earlier formats have been retired.
 
 ---
 
