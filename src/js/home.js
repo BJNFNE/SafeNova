@@ -13,6 +13,7 @@ function _saveCardOrder(ids) {
 
 const Home = {
     async render() {
+        InitLog.step('Home.render');
         const grid = document.getElementById('container-grid'),
             empty = document.getElementById('container-empty'),
             containers = await DB.getContainers();
@@ -81,6 +82,7 @@ const Home = {
                 _applyDoc(false);
             };
         }
+        InitLog.done('Home.render', containers.length + ' container(s)');
     },
 
     _makeCard(c) {
@@ -789,7 +791,10 @@ async function doUnlock() {
             const scope = document.querySelector('input[name="remember-scope"]:checked')?.value || 'tab';
             try {
                 await saveSession(c.id, _sessionRawKey, scope);
-            } catch { /* non-critical */ }
+            } catch (sessErr) {
+                console.error('[SafeNova] saveSession failed:', sessErr);
+                toast('Session could not be saved — you will need to re-enter the password next time', 'warn');
+            }
         } else {
             // Checkbox unchecked — clear any previously saved session
             clearSession(c.id);
