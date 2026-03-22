@@ -1938,6 +1938,19 @@ input[type="password"]::-ms-clear {
 .remember-opt.disabled input[type="radio"] {
     cursor: default;
 }
+.remember-opt-badge {
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--accent2);
+    background: rgba(78, 201, 176, 0.12);
+    border: 1px solid rgba(78, 201, 176, 0.25);
+    border-radius: 3px;
+    padding: 1px 5px;
+    margin-left: 4px;
+    vertical-align: middle;
+    white-space: nowrap;
+    pointer-events: none;
+}
 
 /* ============================================================
    SESSION BADGE  (on container cards — Home view)

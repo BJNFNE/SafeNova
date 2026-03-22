@@ -3,24 +3,33 @@
 /* ============================================================
    SESSION ENCRYPTION  —  AES-256-GCM encrypted session storage
 
-   Design:
-   • The 32-byte session key is generated once and kept in
-     sessionStorage ('snv-sk'). It never touches localStorage.
-   • Tab-scope sessions  → snv-s-{cid}  in sessionStorage.
-   • Browser-scope sessions → snv-sb-{cid} in localStorage.
-   • When the browser closes, sessionStorage is wiped → the key
-     is gone → any localStorage blobs become undecryptable.
-   • An attacker who dumps only localStorage cannot recover
-     passwords without also reading the current sessionStorage.
+   Two distinct encryption keys are used, one per scope:
 
-   Cross-tab behaviour:
-   • snv-sk is per-tab (sessionStorage). A browser-scope blob in
-     localStorage can only be decrypted by the tab that wrote it.
-   • loadSession() does NOT destroy the browser-scope blob on
-     decrypt failure — it may simply belong to another tab.
-   • hasSession() reflects raw blob presence (cross-tab) so the
-     session badge stays visible in any tab.
+   Tab-scope  (snv-s-{cid}  in sessionStorage):
+   • Encrypted with snv-sk — a per-tab AES key in sessionStorage.
+   • Survives page refresh within the same tab; dies when the tab
+     is closed (sessionStorage is wiped).
+
+   Persistent  (snv-sb-{cid}  in localStorage)  ["Until signed out"]:
+   • Encrypted with snv-bsk — a shared AES-256-GCM key in localStorage.
+   • The SAME key is available to every tab of the same browser
+     origin, so any tab can resume the session without re-entry.
+   • Survives browser restarts — this is NOT a "browser session";
+     the blob persists until the user explicitly signs out or the
+     7-day TTL baked into the encrypted payload expires.
+   • Trade-off: both key and blob live in localStorage; an
+     attacker with read access to localStorage (e.g. disk image,
+     malware) can decrypt the stored key material.  Use only on
+     a trusted personal device.
+
+   Separation guarantees:
+   • Tab-scope blobs cannot be decrypted by other tabs because
+     snv-sk lives in sessionStorage (not shared across tabs).
+   • Browser-scope blobs are decryptable by all tabs because
+     snv-bsk lives in localStorage (shared across same origin).
    ============================================================ */
+
+/* ── Tab-scope session key (sessionStorage, per-tab) ── */
 let _sessionKey = null;
 
 async function _getOrCreateSessionKey() {
@@ -37,19 +46,36 @@ async function _getOrCreateSessionKey() {
     const exp = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, true, ['encrypt', 'decrypt']);
     const exported = await crypto.subtle.exportKey('raw', exp);
     sessionStorage.setItem('snv-sk', btoa(String.fromCharCode(...new Uint8Array(exported))));
-    // Re-import as non-extractable for forward secrecy within this session
     _sessionKey = await crypto.subtle.importKey('raw', exported, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
     return _sessionKey;
+}
+
+/* ── Browser-scope session key (localStorage, shared across all tabs) ── */
+let _browserScopeKey = null;
+
+async function _getOrCreateBrowserScopeKey() {
+    if (_browserScopeKey) return _browserScopeKey;
+    const stored = localStorage.getItem('snv-bsk');
+    if (stored) {
+        try {
+            const raw = Uint8Array.from(atob(stored), ch => ch.charCodeAt(0));
+            _browserScopeKey = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+            return _browserScopeKey;
+        } catch { /* corrupted — regenerate below */ }
+    }
+    const raw = crypto.getRandomValues(new Uint8Array(32));
+    const exp = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, true, ['encrypt', 'decrypt']);
+    const exported = await crypto.subtle.exportKey('raw', exp);
+    localStorage.setItem('snv-bsk', btoa(String.fromCharCode(...new Uint8Array(exported))));
+    _browserScopeKey = await crypto.subtle.importKey('raw', exported, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+    return _browserScopeKey;
 }
 
 // Browser-scope sessions expire after 7 days; tab-scope persist until tab closes
 const SESSION_TTL_BROWSER = 7 * 24 * 60 * 60 * 1000;
 
-// rawKeyBytes — Uint8Array(32) from Crypto.deriveRaw(), never the plaintext password
-async function saveSession(cid, rawKeyBytes, scope) {
-    const key = await _getOrCreateSessionKey(),
-        iv = crypto.getRandomValues(new Uint8Array(12));
-    const expiryMs = scope === 'browser' ? Date.now() + SESSION_TTL_BROWSER : Number.MAX_SAFE_INTEGER;
+async function _encryptSessionPayload(key, cid, rawKeyBytes, expiryMs) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
     const payload = new Uint8Array(8 + rawKeyBytes.length);
     new DataView(payload.buffer).setBigUint64(0, BigInt(expiryMs), true);
     payload.set(rawKeyBytes, 8);
@@ -58,11 +84,32 @@ async function saveSession(cid, rawKeyBytes, scope) {
     const blob = new Uint8Array(12 + ct.byteLength);
     blob.set(iv);
     blob.set(new Uint8Array(ct), 12);
-    const b64 = btoa(String.fromCharCode(...blob));
+    return btoa(String.fromCharCode(...blob));
+}
+
+async function _decryptSessionPayload(key, cid, b64) {
+    const blob = Uint8Array.from(atob(b64), ch => ch.charCodeAt(0));
+    const iv = blob.slice(0, 12), ct = blob.slice(12);
+    const aad = new TextEncoder().encode('snv-session:' + cid);
+    const dec = await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: aad }, key, ct);
+    const payload = new Uint8Array(dec);
+    const expiry = Number(new DataView(payload.buffer).getBigUint64(0, true));
+    if (Date.now() > expiry) return null; // expired
+    return payload.slice(8); // 32-byte raw key material
+}
+
+// rawKeyBytes — Uint8Array(32) from Crypto.deriveRaw(), never the plaintext password
+async function saveSession(cid, rawKeyBytes, scope) {
     if (scope === 'browser') {
+        // Use the shared browser-scope key so ALL tabs can resume this session
+        const key = await _getOrCreateBrowserScopeKey();
+        const b64 = await _encryptSessionPayload(key, cid, rawKeyBytes, Date.now() + SESSION_TTL_BROWSER);
         localStorage.setItem('snv-sb-' + cid, b64);
         sessionStorage.removeItem('snv-s-' + cid);
     } else {
+        // Use the per-tab key; only this tab can decrypt it
+        const key = await _getOrCreateSessionKey();
+        const b64 = await _encryptSessionPayload(key, cid, rawKeyBytes, Number.MAX_SAFE_INTEGER);
         sessionStorage.setItem('snv-s-' + cid, b64);
         localStorage.removeItem('snv-sb-' + cid);
     }
@@ -70,32 +117,37 @@ async function saveSession(cid, rawKeyBytes, scope) {
 
 // Returns Uint8Array(32) raw key bytes on success, or null on failure/expiry
 async function loadSession(cid) {
-    const tabBlob    = sessionStorage.getItem('snv-s-'  + cid);
-    const browserBlob = localStorage.getItem('snv-sb-' + cid);
-    const b64 = tabBlob || browserBlob;
-    if (!b64) return null;
-    try {
-        const key = await _getOrCreateSessionKey(),
-            blob = Uint8Array.from(atob(b64), ch => ch.charCodeAt(0)),
-            iv = blob.slice(0, 12),
-            ct = blob.slice(12),
-            aad = new TextEncoder().encode('snv-session:' + cid),
-            dec = await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: aad }, key, ct);
-        const payload = new Uint8Array(dec);
-        const expiry = Number(new DataView(payload.buffer).getBigUint64(0, true));
-        if (Date.now() > expiry) { clearSession(cid); return null; }
-        return payload.slice(8); // 32-byte raw key material
-    } catch {
-        // Decryption failure — two possible reasons:
-        //   1. Tab-scope blob (snv-s-): lives in THIS tab's sessionStorage, so we own it.
-        //      Corrupted or replaced → safe to clear.
-        //   2. Browser-scope blob (snv-sb-): encrypted with ANOTHER tab's snv-sk.
-        //      We cannot and must not remove it — it's a valid remembered session for
-        //      the owning tab.  Leave it alone; it will expire via the 7-day TTL or be
-        //      replaced when that tab saves a new session.
-        if (tabBlob) sessionStorage.removeItem('snv-s-' + cid);
-        return null;
+    // Tab-scope first — per-tab key, lives in sessionStorage
+    const tabBlob = sessionStorage.getItem('snv-s-' + cid);
+    if (tabBlob) {
+        try {
+            const key = await _getOrCreateSessionKey();
+            const raw = await _decryptSessionPayload(key, cid, tabBlob);
+            if (raw) return raw;
+            // null means expired
+            sessionStorage.removeItem('snv-s-' + cid);
+        } catch {
+            // Corrupted tab blob — belongs to this tab, safe to clear
+            sessionStorage.removeItem('snv-s-' + cid);
+        }
     }
+
+    // Browser-scope — shared key, any tab can decrypt
+    const browserBlob = localStorage.getItem('snv-sb-' + cid);
+    if (browserBlob) {
+        try {
+            const key = await _getOrCreateBrowserScopeKey();
+            const raw = await _decryptSessionPayload(key, cid, browserBlob);
+            if (raw) return raw;
+            // null means expired
+            localStorage.removeItem('snv-sb-' + cid);
+        } catch {
+            // Corrupted blob — remove it
+            localStorage.removeItem('snv-sb-' + cid);
+        }
+    }
+
+    return null;
 }
 
 function clearSession(cid) {
