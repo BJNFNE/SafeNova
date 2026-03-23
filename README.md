@@ -16,6 +16,26 @@ Key properties:
 
 ---
 
+## 🚀 Getting started
+
+### Option A — Use online version
+
+SafeNova is hosted on: [https://safenova.dosx.su/](https://safenova.dosx.su/)
+
+### Option B — Local server
+
+A zero-dependency PowerShell server is included:
+
+```powershell
+.\\.server.ps1
+```
+
+Or right-click the file → **Run with PowerShell**. It starts an HTTP server on port `7777` (or the next free port) and opens the app in your default browser.
+
+No external installs needed — it uses the Windows built-in `HttpListener`.
+
+---
+
 ## ⚙️ Features
 
 -   **Multiple containers** — each with its own password and independent storage limit (8 GB per container)
@@ -74,11 +94,11 @@ The key material is encrypted with **`snv-bsk`** — a shared AES-256-GCM key av
 
 Before `snv-bsk` is written to `localStorage`, it is itself encrypted with a separate _wrap key_ that is derived on-the-fly via **HKDF-SHA-256** from **three independent sources** and **never stored anywhere**:
 
-| #   | Source              | Storage                                       | Purpose                                                                 |
-| --- | ------------------- | --------------------------------------------- | ----------------------------------------------------------------------- |
+| #   | Source              | Storage                                       | Purpose                                                                                          |
+| --- | ------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | 1   | Browser fingerprint | _(computed)_                                  | `origin \0 userAgent \0 platform \0 language \0 hardwareConcurrency \0 colorDepth \0 pixelDepth` |
-| 2   | `snv-kc` cookie     | Cookie jar (`SameSite=Strict`, ~400 days TTL) | 32 random bytes, isolated from localStorage                             |
-| 3   | `snv-ki` record     | Separate IndexedDB `SafeNovaKS`               | 32 random bytes, independent from main `SafeNovaEFS` database           |
+| 2   | `snv-kc` cookie     | Cookie jar (`SameSite=Strict`, ~400 days TTL) | 32 random bytes, isolated from localStorage                                                      |
+| 3   | `snv-ki` record     | Separate IndexedDB `SafeNovaKS`               | 32 random bytes, independent from main `SafeNovaEFS` database                                    |
 
 ```
 ikm      = fingerprint \0 cookie_bytes(32) \0 idb_bytes(32)
@@ -154,26 +174,6 @@ When running via the included PowerShell dev server, every response additionally
 -   A modern browser: **Chrome 90+**, **Firefox 90+**, **Safari 15+**, or **Edge 90+**
 -   Web Crypto API must be available — this requires either **HTTPS** or **`localhost`**
 -   No plugins, no extensions, no backend
-
----
-
-## 🚀 Getting started
-
-### Option A — Use online version
-
-SafeNova is hosted on: [https://safenova.dosx.su/](https://safenova.dosx.su/)
-
-### Option B — Local server
-
-A zero-dependency PowerShell server is included:
-
-```powershell
-.\\.server.ps1
-```
-
-Or right-click the file → **Run with PowerShell**. It starts an HTTP server on port `7777` (or the next free port) and opens the app in your default browser.
-
-No external installs needed — it uses the Windows built-in `HttpListener`.
 
 ---
 
@@ -337,19 +337,19 @@ Each tick performs two independent checks:
 
 ### Intentionally excluded from checks
 
-| API                            | Reason                                                                                                                                                             |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `console` namespace            | Overrides are common and benign (DevTools, logging libraries)                                                                                                      |
-| `Function.prototype.toString`  | Protected via the captured `_fnToString` reference at init time; live checks cause false positives because extensions (Adblock, Dark Reader) routinely wrap it      |
-| `document.createElement`       | Extensions legitimately create elements (including `<script>`) for their content scripts; blocking this causes widespread false positives on every page load        |
+| API                           | Reason                                                                                                                                                         |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `console` namespace           | Overrides are common and benign (DevTools, logging libraries)                                                                                                  |
+| `Function.prototype.toString` | Protected via the captured `_fnToString` reference at init time; live checks cause false positives because extensions (Adblock, Dark Reader) routinely wrap it |
+| `document.createElement`      | Extensions legitimately create elements (including `<script>`) for their content scripts; blocking this causes widespread false positives on every page load   |
 
 ### Network request interception
 
 Every outbound request is validated against `window.location.origin` before it is allowed to proceed:
 
-- **`fetch`** — blocked and rejected with an error
-- **`XMLHttpRequest.prototype.open`** — blocked and throws synchronously
-- **`navigator.sendBeacon`** — blocked and returns `false`
+-   **`fetch`** — blocked and rejected with an error
+-   **`XMLHttpRequest.prototype.open`** — blocked and throws synchronously
+-   **`navigator.sendBeacon`** — blocked and returns `false`
 
 SafeNova makes no legitimate external network requests; any attempt is by definition suspicious.
 
