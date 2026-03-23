@@ -290,43 +290,56 @@
     }
 
     /* ──────────────────────────────────────────────────────────
-       5.  Hook installation
-           Hooks are named functions so we can do reference-
-           equality checks in the watchdog.
+       5.  Hook installation — double-hook pattern
+           The real logic lives in IIFE-private _*Impl closures.
+           The publicly assigned functions are thin forwarders, so
+           fetch.toString() / XMLHttpRequest.prototype.open.toString()
+           reveals only the forwarder body — not the security logic.
+
+           _fetchImpl, _xhrOpenImpl, _sendBeaconImpl are invisible
+           from the DevTools console (closure scope, not on window).
        ────────────────────────────────────────────────────────── */
+
+    // ── Inner implementations (closure-private) ────────────────
+    const _fetchImpl = function(input) {
+        const url = (input instanceof Request) ? input.url : String(input ?? '');
+        if (_isExternal(url)) {
+            _triggerAlert('Outbound fetch blocked → ' + url);
+            return Promise.reject(new Error('[SafeNova Proactive] External fetch blocked'));
+        }
+        return _N.fetch.apply(this === window ? window : globalThis, arguments);
+    };
+
+    const _xhrOpenImpl = function(method, url) {
+        if (_isExternal(String(url ?? ''))) {
+            _triggerAlert('Outbound XHR blocked → ' + url);
+            throw new Error('[SafeNova Proactive] External XHR blocked');
+        }
+        return _N.xhrOpen.apply(this, arguments);
+    };
+
+    const _sendBeaconImpl = function(url) {
+        if (_isExternal(String(url ?? ''))) {
+            _triggerAlert('sendBeacon to external URL blocked → ' + url);
+            return false;
+        }
+        return _N.sendBeacon.apply(navigator, arguments);
+    };
+
+    // ── Publicly visible hooks (thin forwarders only) ──────────
     const _H = {}; // live hook references — checked every tick
 
     function _installHooks() {
-        // ── fetch ──────────────────────────────────────────────
-        _H.fetch = function snvFetch(input, init) {
-            const url = (input instanceof Request) ? input.url : String(input ?? '');
-            if (_isExternal(url)) {
-                _triggerAlert('Outbound fetch blocked → ' + url);
-                return Promise.reject(new Error('[SafeNova Proactive] External fetch blocked'));
-            }
-            return _N.fetch.apply(this === window ? window : globalThis, arguments);
-        };
+        // toString() on each of these shows only the one-liner forwarder.
+        // The actual check logic inside _*Impl is unreachable from outside.
+        _H.fetch = function snvFetch() { return _fetchImpl.apply(this, arguments); };
         window.fetch = _H.fetch;
 
-        // ── XMLHttpRequest.prototype.open ─────────────────────
-        _H.xhrOpen = function snvXhrOpen(method, url) {
-            if (_isExternal(String(url ?? ''))) {
-                _triggerAlert('Outbound XHR blocked → ' + url);
-                throw new Error('[SafeNova Proactive] External XHR blocked');
-            }
-            return _N.xhrOpen.apply(this, arguments);
-        };
+        _H.xhrOpen = function snvXhrOpen() { return _xhrOpenImpl.apply(this, arguments); };
         XMLHttpRequest.prototype.open = _H.xhrOpen;
 
-        // ── navigator.sendBeacon ───────────────────────────────
         if (_N.sendBeacon) {
-            _H.sendBeacon = function snvSendBeacon(url, data) {
-                if (_isExternal(String(url ?? ''))) {
-                    _triggerAlert('sendBeacon to external URL blocked → ' + url);
-                    return false;
-                }
-                return _N.sendBeacon.apply(navigator, arguments);
-            };
+            _H.sendBeacon = function snvSendBeacon() { return _sendBeaconImpl.apply(this, arguments); };
             navigator.sendBeacon = _H.sendBeacon;
         }
 
