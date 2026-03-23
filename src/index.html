@@ -593,6 +593,8 @@
             </div>
         </div>
 
+
+
         <!-- New Text File Modal -->
         <div class="modal" id="modal-new-text" style="display:none;min-width:340px">
             <div class="modal-header">
@@ -711,15 +713,7 @@
                 </div>
                 <div class="form-group">
                     <label class="form-label">Confirm New Password</label>
-                    <div class="input-wrap">
-                        <input type="password" class="input" id="cp-new2" placeholder="Repeat new password" autocomplete="new-password">
-                        <button class="input-eye" id="cp-new2-eye" tabindex="-1">
-                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                <path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" stroke="currentColor" stroke-width="1.5" />
-                                <circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.5" />
-                            </svg>
-                        </button>
-                    </div>
+                    <input type="password" class="input" id="cp-new2" placeholder="Repeat new password" autocomplete="new-password">
                 </div>
                 <div class="notice-box warn">
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;margin-top:1px">
@@ -972,6 +966,9 @@
                     </div>
                     <div class="settings-section" style="margin-top:4px;">
                         <div class="settings-section-title">Diagnostics</div>
+                        <div style="font-size:12px;color:var(--text-dim);line-height:1.5;margin-bottom:8px">
+                            Run a full integrity scan of the container's virtual file system and database records. Detects orphaned nodes, broken parent references, duplicate names, missing blobs, and other structural issues — with one-click auto-repair.
+                        </div>
                         <div class="settings-row">
                             <span class="settings-label">Container integrity</span>
                             <button class="btn" id="fs-check-open">
@@ -981,6 +978,54 @@
                                 </svg>
                                 Run diagnostics
                             </button>
+                        </div>
+                    </div>
+                    <div class="settings-section danger-zone-section">
+                        <div class="settings-section-title danger-zone-title">Danger Zone</div>
+                        <div class="danger-zone-body">
+                            <div class="danger-zone-header">
+                                <div>
+                                    <div class="danger-zone-label">
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                                            <path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.25C17.25 22.15 21 17.25 21 12V7L12 2z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+                                            <path d="M12 8v5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                                            <circle cx="12" cy="15.5" r="0.75" fill="currentColor"/>
+                                        </svg>
+                                        Duress password
+                                    </div>
+                                    <div class="danger-zone-desc">
+                                        A secondary password entered under coercion. When used anywhere — unlock, change password, or export — it behaves <strong>exactly like an incorrect password</strong>, but silently and <strong>irreversibly destroys</strong> every encrypted file in the background. The real password still works afterward, but all data inside is already gone — indistinguishable from storage corruption.
+                                    </div>
+                                </div>
+                                <label class="switch danger-zone-switch">
+                                    <input type="checkbox" id="settings-duress-cb">
+                                    <span class="switch-slider switch-slider-danger"></span>
+                                </label>
+                            </div>
+                            <div id="duress-form">
+                                <div class="form-group duress-fg">
+                                    <label class="form-label duress-fl">Duress Password <span class="duress-hint">(min. 4 characters)</span></label>
+                                    <div class="input-wrap">
+                                        <input type="password" class="input" id="duress-pw" placeholder="Enter duress password" autocomplete="new-password">
+                                        <button class="input-eye" id="duress-pw-eye" tabindex="-1"></button>
+                                    </div>
+                                    <div class="pw-strength" id="duress-pw-strength"></div>
+                                    <div class="pw-strength-row" id="duress-pw-strength-label"></div>
+                                </div>
+                                <div class="form-group duress-fg">
+                                    <label class="form-label duress-fl">Confirm</label>
+                                    <input type="password" class="input" id="duress-pw2" placeholder="Repeat duress password" autocomplete="new-password">
+                                </div>
+                                <div class="duress-set-error" id="duress-set-error"></div>
+                                <button class="btn btn-danger duress-set-btn" id="duress-set-ok">Set Duress Password</button>
+                            </div>
+                            <div id="duress-active-info" class="duress-active-info">
+                                <div class="duress-active-badge">
+                                    <span class="duress-active-dot"></span>
+                                    Active — entering this password will silently destroy all files
+                                </div>
+                                <button class="btn btn-danger duress-remove-btn" id="duress-remove-btn">Remove Duress Password</button>
+                            </div>
                         </div>
                     </div>
                 </div>

@@ -50,8 +50,9 @@ No external installs needed — it uses the Windows built-in `HttpListener`.
 -   **Quick export button** — dedicated **Export** button in the desktop toolbar provides one-click passwordless export when the export password guard is disabled
 -   **Sort & arrange** — sort icons by name, date, size, or type; drag to custom positions
 -   **Secure container deletion** — before permanent erasure, the first 8 bytes of every encrypted blob are overwritten with zeros (cryptographic pre-shredding), ensuring the AES-GCM ciphertext is irrecoverable even on storage media that lazily reclaims pages
+-   **Duress password** — optional panic password that, when entered anywhere (unlock, change password, export), looks exactly like an incorrect password but silently destroys all encrypted data in the background; see [Duress Password](#-duress-password) below
 -   **SafeNova Proactive** — runtime protection module that loads first in `<head>`, captures all security-critical native function references at startup, hooks outbound network APIs to block external requests, and runs a watchdog every second to verify native function purity (crypto, storage, encoding); any detected threat immediately clears all session keys and shows a security alert
--   **Container integrity scanner** — 27 automated checks (21 VFS structural + 6 database-level) with one-click auto-repair, **Deep Clean** (flattens over-nested folder trees, repairs all metadata), and a backup prompt before any destructive operation
+-   **Container integrity scanner** — 28 automated checks (21 VFS structural + 7 database-level) with one-click auto-repair, **Deep Clean** (flattens over-nested folder trees, repairs all metadata), and a backup prompt before any destructive operation; includes file decryption verification that detects corrupted or unreadable blobs (including those silently destroyed by the duress trigger)
 -   **Settings** — three tabs: personalization, statistics, activity logs
 -   **Keyboard shortcuts** — `Delete`, `F2`, `Ctrl+A`, `Ctrl+C/X/V`, `Ctrl+S` (save in editor), `Escape`
 -   **Mobile-friendly** — long-press to drag icons, rubber-band selection, single/double-tap gestures, paste at finger position, multi-file drag with per-item snap previews
@@ -68,6 +69,7 @@ No external installs needed — it uses the Windows built-in `HttpListener`.
 | Session tokens   | AES-256-GCM, dual-key: per-tab ephemeral or persistent |
 | Browser key wrap | HKDF-SHA-256 from fingerprint + cookie + IndexedDB     |
 | Integrity check  | AES-256-GCM verification blob authenticated on open    |
+| Duress hash      | SHA-256(random 32-byte salt ‖ password), IDB-only      |
 
 Every file is encrypted individually — each with its own freshly generated IV. The virtual filesystem (folder tree, file names, sizes, positions) is encrypted as a separate blob using the same derived key. The plaintext password is never stored; only the derived key is held in JavaScript memory for the duration of an active session.
 
@@ -195,8 +197,8 @@ SafeNova/
     ├── docmode.js         # Pre-CSS docmode guard (runs before stylesheet loads)
     ├── daemon.js          # SafeNova Proactive — runtime protection module (loads in <head>, first of all)
     ├── initlog.js         # Initialization stage console logger (InitLog)
-    ├── constants.js       # Shared constants (DB names, limits, chunk size), utilities, icon SVGs
-    ├── db.js              # IndexedDB abstraction — SafeNovaEFS (containers / files / vfs / chunks stores); lightweight `getFileMetaByCid()` for export cache validation without blob reassembly
+    ├── constants.js       # Shared constants (DB names, limits, chunk size), utilities, icon SVGs, duress hash helpers
+    ├── db.js              # IndexedDB abstraction — SafeNovaEFS (containers / files / vfs / chunks stores);
     ├── crypto.js          # AES-256-GCM + Argon2id encryption layer
     ├── vfs.js             # In-memory virtual filesystem (nodes, positions, child index)
     ├── state.js           # App state singleton — key, session encrypt/decrypt, three-source wrap key
@@ -308,6 +310,34 @@ On accepting the takeover, the requesting tab writes a **kick flag** into the cl
 
 ---
 
+## 🛑 Duress Password
+
+The duress password is a secondary password you can set for any container. It is designed for situations where you are forced to provide your password under coercion.
+
+### How it works
+
+1. You set a duress password in **Settings → Danger Zone** (it must differ from your main password)
+2. When the duress password is entered **anywhere** — the unlock screen, the change password dialog, or the export password prompt — the app responds with the standard **"Incorrect password"** error, exactly the same as any wrong password
+3. Behind the scenes, every encrypted file blob in the container is silently and irreversibly corrupted
+4. The duress hash and export cache are erased from the database, leaving no trace that a duress password ever existed
+5. Later, when the real password is entered, the container opens normally — the folder tree and file names are intact — but every file is unreadable, indistinguishable from natural storage corruption
+
+### Why this design
+
+An attacker watching over your shoulder sees exactly what they’d see with any wrong password — an error message. There is no special screen, no empty vault, nothing that reveals a duress mechanism exists at all. The destruction is invisible and happens before the “incorrect” error is shown.
+
+Because the real password still works, you can unlock the container afterward to confirm the damage. The built-in **integrity scanner** will detect that files cannot be decrypted and can clean up the broken entries.
+
+### Technical details
+
+-   The duress hash is stored in IndexedDB as `SHA-256(random_32‑byte_salt ‖ password)` — never exported to `.safenova` files
+-   Corruption method: the first 8 bytes of each encrypted blob are zeroed, breaking the AES-GCM authentication tag
+-   After triggering, the `duressHash` field and `_exportCache` are deleted from the container record — no forensic residue
+-   It can be toggled on and off in Settings → Danger Zone
+-   The duress password must be at least 4 characters and must differ from the main password
+
+---
+
 ## 🛡️ SafeNova Proactive
 
 SafeNova Proactive is a self-contained runtime protection module (`daemon.js`) that loads in `<head>` **before every other application script**. The application refuses to start if the guard is absent or failed to initialize.
@@ -393,7 +423,7 @@ When **Paste** is triggered from the context menu on a touch device, the items a
 
 ## 🛡️ Container Integrity Scanner
 
-The built-in scanner performs a deep analysis of the virtual disk image, encrypted file table, folder hierarchy, desktop layout, and workspace environment. It runs **27 checks** in two phases:
+The built-in scanner performs a deep analysis of the virtual disk image, encrypted file table, folder hierarchy, desktop layout, and workspace environment. It runs **28 checks** in two phases:
 
 ### Phase 1 — VFS structural checks (21 steps, synchronous)
 
@@ -421,16 +451,17 @@ The built-in scanner performs a deep analysis of the virtual disk image, encrypt
 | 20  | Folder depth analysis        | O(n) memoized; warns when nesting > 50 levels                                  |
 | 21  | Node count summary           | Informational — file/folder/position counts                                    |
 
-### Phase 2 — Database-level checks (6 steps, async)
+### Phase 2 — Database-level checks (7 steps, async)
 
-| #   | Check                      | Repairs                                                                                                             |
-| --- | -------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| 1   | File data existence        | Removes VFS nodes whose encrypted blob is missing from IndexedDB                                                    |
-| 2   | Encryption IV integrity    | Accepts Array/Uint8Array/ArrayBuffer (canonical: plain Array); coerces base64 strings; purges only if truly invalid |
-| 3   | File blob integrity        | Resets declared size to 0 if blob is empty                                                                          |
-| 4   | Orphaned storage records   | Deletes DB records not referenced by any VFS node                                                                   |
-| 5   | Record container binding   | Fixes records bound to wrong container ID                                                                           |
-| 6   | Container size consistency | Recalculates totalSize from live VFS nodes                                                                          |
+| #   | Check                        | Repairs                                                                                                             |
+| --- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| 1   | File data existence          | Removes VFS nodes whose encrypted blob is missing from IndexedDB                                                    |
+| 2   | Encryption IV integrity      | Accepts Array/Uint8Array/ArrayBuffer (canonical: plain Array); coerces base64 strings; purges only if truly invalid |
+| 3   | File blob integrity          | Resets declared size to 0 if blob is empty                                                                          |
+| 4   | Orphaned storage records     | Deletes DB records not referenced by any VFS node                                                                   |
+| 5   | Record container binding     | Fixes records bound to wrong container ID                                                                           |
+| 6   | Container size consistency   | Recalculates totalSize from live VFS nodes                                                                          |
+| 7   | File decryption verification | Attempts to decrypt each blob; removes files whose ciphertext is unreadable (e.g. corrupted by duress trigger)      |
 
 Before auto-repair runs, a **confirmation dialog** recommends exporting the container as a `.safenova` backup — you can do this without leaving the scanner. After a successful repair, a verification scan runs automatically to confirm all issues are resolved.
 

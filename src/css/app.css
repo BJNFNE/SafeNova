@@ -342,6 +342,13 @@ html.snv-doc-hidden #home-doc-tab {
 .container-card:active {
     transform: scale(0.99);
 }
+@keyframes card-highlight {
+    0% { box-shadow: 0 0 0 2px var(--accent); }
+    100% { box-shadow: 0 0 0 2px transparent; }
+}
+.container-card.highlight {
+    animation: card-highlight 1.8s ease-out forwards;
+}
 /* Enterprise / tier badge */
 .tier-badge {
     display: inline-flex;
@@ -2520,6 +2527,89 @@ input[type="password"]::-ms-clear {
 .switch input:checked + .switch-slider::before {
     transform: translateX(16px);
 }
+.switch input:checked + .switch-slider-danger {
+    background: var(--red);
+}
+
+/* ── Danger Zone (Duress) ────────────────────────────────────── */
+.danger-zone-section { margin-top: 4px; }
+.danger-zone-title { color: var(--red); border-color: rgba(244,71,71,0.3); }
+.danger-zone-body {
+    padding: 12px;
+    background: rgba(244,71,71,0.06);
+    border: 1px solid rgba(244,71,71,0.22);
+    border-radius: var(--r);
+}
+.danger-zone-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+.danger-zone-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+.danger-zone-label svg { flex-shrink: 0; }
+.danger-zone-desc {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 5px;
+    line-height: 1.5;
+}
+.danger-zone-switch { flex-shrink: 0; margin-top: 2px; }
+
+/* Duress form animated expand/collapse */
+#duress-form {
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    margin-top: 0;
+    transition: max-height .3s ease, opacity .3s ease, margin-top .3s ease;
+}
+#duress-form.open {
+    max-height: 300px;
+    opacity: 1;
+    margin-top: 10px;
+}
+.duress-fg { margin-bottom: 8px; }
+.duress-fl { font-size: 12px; }
+.duress-hint { font-size: 11px; color: var(--text-dim); font-weight: 400; }
+.duress-set-error {
+    display: none;
+    font-size: 12px;
+    color: var(--red);
+    margin-top: 4px;
+    margin-bottom: 4px;
+}
+.duress-set-btn { width: 100%; margin-top: 2px; }
+
+/* Duress active-info block */
+.duress-active-info {
+    display: none;
+    margin-top: 10px;
+}
+.duress-active-badge {
+    font-size: 11px;
+    color: var(--red);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-bottom: 8px;
+}
+.duress-active-dot {
+    width: 6px;
+    height: 6px;
+    background: var(--red);
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+}
+.duress-remove-btn { width: 100%; font-size: 12px; }
 
 /* Stats */
 .stats-grid {
