@@ -43,7 +43,7 @@ Key properties:
 | File encryption  | AES-256-GCM (random 96-bit IV per file)                |
 | VFS encryption   | AES-256-GCM (same key, independent IV)                 |
 | Session tokens   | AES-256-GCM, dual-key: per-tab ephemeral or persistent |
-| Browser key wrap | HKDF-SHA-256 from fingerprint + cookie + IndexedDB    |
+| Browser key wrap | HKDF-SHA-256 from fingerprint + cookie + IndexedDB     |
 | Integrity check  | AES-256-GCM verification blob authenticated on open    |
 
 Every file is encrypted individually — each with its own freshly generated IV. The virtual filesystem (folder tree, file names, sizes, positions) is encrypted as a separate blob using the same derived key. The plaintext password is never stored; only the derived key is held in JavaScript memory for the duration of an active session.
@@ -72,11 +72,11 @@ The key material is encrypted with **`snv-bsk`** — a shared AES-256-GCM key av
 
 Before `snv-bsk` is written to `localStorage`, it is itself encrypted with a separate _wrap key_ that is derived on-the-fly via **HKDF-SHA-256** from **three independent sources** and **never stored anywhere**:
 
-| # | Source | Storage | Purpose |
-|---|--------|---------|-------|
-| 1 | Browser fingerprint | _(computed)_ | `origin \0 language \0 hardwareConcurrency \0 colorDepth \0 pixelDepth` |
-| 2 | `snv-kc` cookie | Cookie jar (`SameSite=Strict`, ~400 days TTL) | 32 random bytes, isolated from localStorage |
-| 3 | `snv-ki` record | Separate IndexedDB `SafeNovaKS` | 32 random bytes, independent from main `SafeNovaEFS` database |
+| #   | Source              | Storage                                       | Purpose                                                                 |
+| --- | ------------------- | --------------------------------------------- | ----------------------------------------------------------------------- |
+| 1   | Browser fingerprint | _(computed)_                                  | `origin \0 language \0 hardwareConcurrency \0 colorDepth \0 pixelDepth` |
+| 2   | `snv-kc` cookie     | Cookie jar (`SameSite=Strict`, ~400 days TTL) | 32 random bytes, isolated from localStorage                             |
+| 3   | `snv-ki` record     | Separate IndexedDB `SafeNovaKS`               | 32 random bytes, independent from main `SafeNovaEFS` database           |
 
 ```
 ikm      = fingerprint \0 cookie_bytes(32) \0 idb_bytes(32)
@@ -103,6 +103,46 @@ Both scope types use the same blob layout: `IV(12) || AES-256-GCM(scope_key, exp
 #### Remaining trade-off
 
 An attacker with live access to the running browser process (e.g. malicious extension, XSS) can still call the same fingerprint function, read the cookie, and query the `SafeNovaKS` IndexedDB to derive the wrap key. The three-source wrapping layer protects against _offline_ credential theft (disk images, direct `localStorage` dumps, partial storage exports), not against in-browser code execution.
+
+---
+
+## 🔒 Content Security Policy
+
+### Meta tag (inline)
+
+`index.html` declares a strict per-directive CSP via `<meta http-equiv="Content-Security-Policy">`:
+
+| Directive     | Value                       |
+| ------------- | --------------------------- |
+| `default-src` | `'none'`                    |
+| `script-src`  | `'self' 'wasm-unsafe-eval'` |
+| `style-src`   | `'self' 'unsafe-inline'`    |
+| `img-src`     | `'self' blob: data:`        |
+| `media-src`   | `blob:`                     |
+| `frame-src`   | `blob:`                     |
+| `font-src`    | `'self'`                    |
+| `connect-src` | `'self'`                    |
+| `worker-src`  | `'self' blob:`              |
+| `base-uri`    | `'self'`                    |
+| `form-action` | `'none'`                    |
+| `object-src`  | `'none'`                    |
+
+`'unsafe-inline'` is absent from `script-src`. There are no inline `<script>` blocks — the docmode persistence guard (`docmode.js`) is loaded as an external file before the stylesheet. All JavaScript is loaded via `'self'`. Argon2id WASM compilation is permitted by `'wasm-unsafe-eval'`.
+
+### Server-level headers (`.server.ps1`)
+
+When running via the included PowerShell dev server, every response additionally carries:
+
+| Header                         | Value                                                          |
+| ------------------------------ | -------------------------------------------------------------- |
+| `X-Content-Type-Options`       | `nosniff`                                                      |
+| `X-Frame-Options`              | `DENY`                                                         |
+| `Referrer-Policy`              | `no-referrer`                                                  |
+| `Permissions-Policy`           | `interest-cohort=(), geolocation=(), camera=(), microphone=()` |
+| `Cross-Origin-Opener-Policy`   | `same-origin`                                                  |
+| `Cross-Origin-Embedder-Policy` | `require-corp`                                                 |
+
+`Cross-Origin-Opener-Policy: same-origin` prevents other origins from holding a reference to the app window. `Cross-Origin-Embedder-Policy: require-corp` blocks cross-origin subresource loads that lack explicit CORP headers — irrelevant in practice since all resources are same-origin, but also a prerequisite for enabling `SharedArrayBuffer` if needed in the future.
 
 ---
 
@@ -148,6 +188,7 @@ SafeNova/
 │
 └── js/
     ├── argon2.umd.min.js  # Argon2id WASM/JS implementation (hashwasm)
+    ├── docmode.js         # Pre-CSS docmode guard (runs before stylesheet loads)
     ├── initlog.js         # Initialization stage console logger (InitLog)
     ├── constants.js       # Shared constants (DB names, limits, chunk size), utilities, icon SVGs
     ├── db.js              # IndexedDB abstraction — SafeNovaEFS (containers / files / vfs / chunks stores)

@@ -905,12 +905,12 @@ html.snv-doc-hidden #home-doc-tab {
 .unlock-error {
     font-size: 12px;
     color: var(--red);
-    display: flex;
+    display: none;
     align-items: center;
     gap: 8px;
     max-height: 0;
     overflow: hidden;
-    padding: 0 10px;
+    padding: 0;
     border: 1px solid transparent;
     border-radius: var(--r);
     background: transparent;
@@ -921,6 +921,7 @@ html.snv-doc-hidden #home-doc-tab {
         border-color var(--transition);
 }
 .unlock-error:not(:empty) {
+    display: flex;
     max-height: 52px;
     padding: 8px 10px;
     background: var(--bg4);
