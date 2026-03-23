@@ -46,7 +46,7 @@ No external installs needed — it uses the Windows built-in `HttpListener`.
 -   **Session memory** — optionally remember your session per tab (ephemeral, recommended) or persistently until manually signed out, using AES-GCM-encrypted session tokens; persistent sessions survive browser restarts
 -   **Cross-tab session protection** — a container can only be actively open in one browser tab at a time; a lightweight lock protocol detects conflicts and offers instant session takeover
 -   **Container import / export** — portable `.safenova` container files; import reads the archive via streaming `File.slice()` without loading the full file into memory, making multi-gigabyte imports possible; export streams data chunk-by-chunk requiring no single contiguous allocation regardless of container size
--   **Export password guard** — configurable setting (on by default) to require password confirmation before exporting; when disabled, the container key is taken directly from the active session if one is open; if no session is present, a pre-generated encrypted export cache (`_exportCache`) stored alongside the container is used — the cache is built automatically each time the container is locked and is invalidated on password change or when the setting is re-enabled; if the cache is absent or stale (file count or sizes changed), export falls back to a password prompt
+-   **Export password guard** — configurable setting (on by default) to require password confirmation before exporting; when disabled, the container key is taken directly from the active session if one is open; if no session is present, a pre-generated export cache (`_exportCache`) stored in IndexedDB is used — the cache contains the AES-256-GCM-encrypted file manifest (encrypted with the container key), itself **additionally wrapped with the same three-source browser wrap key** (HKDF from fingerprint + cookie + `SafeNovaKS`) that protects session tokens; a raw IDB dump reveals nothing without possession of all three browser-bound credentials; the cache is built automatically each time the container is locked, and invalidated on password change, settings re-enable, or fingerprint mismatch; if absent or stale (file count or sizes changed), export falls back to a password prompt
 -   **Quick export button** — dedicated **Export** button in the desktop toolbar provides one-click passwordless export when the export password guard is disabled
 -   **Sort & arrange** — sort icons by name, date, size, or type; drag to custom positions
 -   **Secure container deletion** — before permanent erasure, the first 8 bytes of every encrypted blob are overwritten with zeros (cryptographic pre-shredding), ensuring the AES-GCM ciphertext is irrecoverable even on storage media that lazily reclaims pages
@@ -106,6 +106,7 @@ ikm      = fingerprint \0 cookie_bytes(32) \0 idb_bytes(32)
 wrap_key = HKDF-SHA-256( ikm, salt=0×32, info="snv-browser-wrap-v3" )
 snv-bsk (localStorage)   = IV(12) || AES-256-GCM( wrap_key, raw_bsk_bytes )
 snv-sk  (sessionStorage) = IV(12) || AES-256-GCM( wrap_key, raw_sk_bytes  )
+_exportCache (IndexedDB) = IV(12) || AES-256-GCM( wrap_key, JSON{ mIv, mBlob, order } )
 ```
 
 Consequences:
@@ -214,7 +215,7 @@ SafeNova/
 2. **Unlock** the container — Argon2id derives the key from your password
 3. Files you upload are encrypted with AES-256-GCM before being saved to IndexedDB
 4. The virtual filesystem (folder tree + icon positions) is also encrypted and saved separately
-5. **Lock** the container — if the **Export password guard** setting is disabled, the derived key is first used to pre-encrypt the file manifest as an export cache (`_exportCache`), stored alongside the container record in IndexedDB; the key is then wiped from memory
+5. **Lock** the container — if the **Export password guard** setting is disabled, the derived key is first used to pre-encrypt the file manifest (`_exportCache`); the resulting ciphertext is then wrapped a second time with the three-source browser wrap key and stored alongside the container record in IndexedDB; the derived key is then wiped from memory
 6. **Delete** the container — first, the first 8 bytes of every encrypted blob are overwritten with zeros (cryptographic pre-shredding); then all encrypted records, the VFS blob, and the container metadata are permanently deleted from IndexedDB
 
 All container data is scoped to the current browser and device. Use **Export Container** to back up or transfer to another device.
@@ -227,15 +228,15 @@ Exported containers are saved as `.safenova` files. This is a **self-contained s
 
 ### Archive sections
 
-| Section                      | Role                                                                                                                                                                                              |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `container.xml`              | Plaintext container manifest: name, creation timestamp, Argon2id salt, and the AES-GCM verification IV and blob needed to authenticate a password at import. No file names or content appear here |
-| `meta/0`                     | The IV (initialization vector) used to encrypt the VFS blob                                                                                                                                       |
-| `meta/1`                     | The encrypted VFS blob — the complete folder hierarchy, file names, MIME types, sizes, timestamps, icon positions, and folder colors, all ciphertext                                              |
-| `meta/2`                     | The IV for the encrypted file manifest                                                                                                                                                            |
+| Section                      | Role                                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `container.xml`              | Plaintext container manifest: name, creation timestamp, Argon2id salt, and the AES-GCM verification IV and blob needed to authenticate a password at import. No file names or content appear here                                                                                                                                                      |
+| `meta/0`                     | The IV (initialization vector) used to encrypt the VFS blob                                                                                                                                                                                                                                                                                            |
+| `meta/1`                     | The encrypted VFS blob — the complete folder hierarchy, file names, MIME types, sizes, timestamps, icon positions, and folder colors, all ciphertext                                                                                                                                                                                                   |
+| `meta/2`                     | The IV for the encrypted file manifest                                                                                                                                                                                                                                                                                                                 |
 | `meta/3`                     | The encrypted file manifest — a JSON structure mapping each file's internal ID to its byte offset and length within `workspace.bin`, encrypted with the container key. When the export password guard is disabled, this blob is taken directly from the pre-built `_exportCache` stored in the container record, avoiding re-encryption at export time |
-| `safenova_efs/workspace.bin` | A single contiguous block of raw ciphertext — the encrypted content of every file, concatenated end-to-end. Without the decryption key, file boundaries and content are indistinguishable         |
-| `meta/activity_logs/0`       | _(Optional)_ The encrypted activity log, included only when the `exportWithLogs` container setting is enabled                                                                                     |
+| `safenova_efs/workspace.bin` | A single contiguous block of raw ciphertext — the encrypted content of every file, concatenated end-to-end. Without the decryption key, file boundaries and content are indistinguishable                                                                                                                                                              |
+| `meta/activity_logs/0`       | _(Optional)_ The encrypted activity log, included only when the `exportWithLogs` container setting is enabled                                                                                                                                                                                                                                          |
 
 ### Design properties
 
