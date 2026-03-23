@@ -46,7 +46,8 @@ No external installs needed — it uses the Windows built-in `HttpListener`.
 -   **Session memory** — optionally remember your session per tab (ephemeral, recommended) or persistently until manually signed out, using AES-GCM-encrypted session tokens; persistent sessions survive browser restarts
 -   **Cross-tab session protection** — a container can only be actively open in one browser tab at a time; a lightweight lock protocol detects conflicts and offers instant session takeover
 -   **Container import / export** — portable `.safenova` container files; import reads the archive via streaming `File.slice()` without loading the full file into memory, making multi-gigabyte imports possible; export streams data chunk-by-chunk requiring no single contiguous allocation regardless of container size
--   **Export password guard** — configurable setting (on by default) to require password confirmation before exporting; when disabled, active-session key is used directly
+-   **Export password guard** — configurable setting (on by default) to require password confirmation before exporting; when disabled, the container key is taken directly from the active session if one is open; if no session is present, a pre-generated encrypted export cache (`_exportCache`) stored alongside the container is used — the cache is built automatically each time the container is locked and is invalidated on password change or when the setting is re-enabled; if the cache is absent or stale (file count or sizes changed), export falls back to a password prompt
+-   **Quick export button** — dedicated **Export** button in the desktop toolbar provides one-click passwordless export when the export password guard is disabled
 -   **Sort & arrange** — sort icons by name, date, size, or type; drag to custom positions
 -   **Secure container deletion** — before permanent erasure, the first 8 bytes of every encrypted blob are overwritten with zeros (cryptographic pre-shredding), ensuring the AES-GCM ciphertext is irrecoverable even on storage media that lazily reclaims pages
 -   **SafeNova Proactive** — runtime protection module that loads first in `<head>`, captures all security-critical native function references at startup, hooks outbound network APIs to block external requests, and runs a watchdog every second to verify native function purity (crypto, storage, encoding); any detected threat immediately clears all session keys and shows a security alert
@@ -195,13 +196,13 @@ SafeNova/
     ├── daemon.js          # SafeNova Proactive — runtime protection module (loads in <head>, first of all)
     ├── initlog.js         # Initialization stage console logger (InitLog)
     ├── constants.js       # Shared constants (DB names, limits, chunk size), utilities, icon SVGs
-    ├── db.js              # IndexedDB abstraction — SafeNovaEFS (containers / files / vfs / chunks stores)
+    ├── db.js              # IndexedDB abstraction — SafeNovaEFS (containers / files / vfs / chunks stores); lightweight `getFileMetaByCid()` for export cache validation without blob reassembly
     ├── crypto.js          # AES-256-GCM + Argon2id encryption layer
     ├── vfs.js             # In-memory virtual filesystem (nodes, positions, child index)
     ├── state.js           # App state singleton — key, session encrypt/decrypt, three-source wrap key
     ├── home.js            # Container management: create, unlock, import, export, change password
     ├── desktop.js         # Desktop UI: icons, folder windows, drag & drop, integrity scanner
-    ├── fileops.js         # File operations: upload, download, open, copy/paste, rename, delete, ZIP export
+    ├── fileops.js         # File operations: upload, download, open, copy/paste, rename, delete, ZIP export; `_updateExportCache()` pre-encrypts the file manifest for passwordless export
     └── main.js            # App boot, event binding, console security warning
 ```
 
@@ -213,7 +214,7 @@ SafeNova/
 2. **Unlock** the container — Argon2id derives the key from your password
 3. Files you upload are encrypted with AES-256-GCM before being saved to IndexedDB
 4. The virtual filesystem (folder tree + icon positions) is also encrypted and saved separately
-5. **Lock** the container — the derived key is immediately wiped from memory
+5. **Lock** the container — if the **Export password guard** setting is disabled, the derived key is first used to pre-encrypt the file manifest as an export cache (`_exportCache`), stored alongside the container record in IndexedDB; the key is then wiped from memory
 6. **Delete** the container — first, the first 8 bytes of every encrypted blob are overwritten with zeros (cryptographic pre-shredding); then all encrypted records, the VFS blob, and the container metadata are permanently deleted from IndexedDB
 
 All container data is scoped to the current browser and device. Use **Export Container** to back up or transfer to another device.
@@ -232,7 +233,7 @@ Exported containers are saved as `.safenova` files. This is a **self-contained s
 | `meta/0`                     | The IV (initialization vector) used to encrypt the VFS blob                                                                                                                                       |
 | `meta/1`                     | The encrypted VFS blob — the complete folder hierarchy, file names, MIME types, sizes, timestamps, icon positions, and folder colors, all ciphertext                                              |
 | `meta/2`                     | The IV for the encrypted file manifest                                                                                                                                                            |
-| `meta/3`                     | The encrypted file manifest — a JSON structure mapping each file’s internal ID to its byte offset and length within `workspace.bin`, encrypted with the container key                             |
+| `meta/3`                     | The encrypted file manifest — a JSON structure mapping each file's internal ID to its byte offset and length within `workspace.bin`, encrypted with the container key. When the export password guard is disabled, this blob is taken directly from the pre-built `_exportCache` stored in the container record, avoiding re-encryption at export time |
 | `safenova_efs/workspace.bin` | A single contiguous block of raw ciphertext — the encrypted content of every file, concatenated end-to-end. Without the decryption key, file boundaries and content are indistinguishable         |
 | `meta/activity_logs/0`       | _(Optional)_ The encrypted activity log, included only when the `exportWithLogs` container setting is enabled                                                                                     |
 
