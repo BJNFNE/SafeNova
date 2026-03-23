@@ -534,7 +534,10 @@ function openNewContainerModal() {
     document.getElementById('nc-pw').value = '';
     document.getElementById('nc-pw2').value = '';
     document.getElementById('nc-pw-strength').style.width = '0%';
+    document.getElementById('nc-pw-strength').style.height = '0';
+    document.getElementById('nc-pw-strength').style.marginTop = '0';
     document.getElementById('nc-pw-strength-label').textContent = '';
+    document.getElementById('nc-pw-strength-label').style.display = 'none';
     document.getElementById('nc-agree').checked = false;
     document.getElementById('nc-create').disabled = true;
     // Reset hardware key button
