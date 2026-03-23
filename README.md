@@ -29,6 +29,7 @@ Key properties:
 -   **Export password guard** — configurable setting (on by default) to require password confirmation before exporting; when disabled, active-session key is used directly
 -   **Sort & arrange** — sort icons by name, date, size, or type; drag to custom positions
 -   **Secure container deletion** — before permanent erasure, the first 8 bytes of every encrypted blob are overwritten with zeros (cryptographic pre-shredding), ensuring the AES-GCM ciphertext is irrecoverable even on storage media that lazily reclaims pages
+-   **SafeNova Proactive** — runtime protection module that loads first in `<head>`, captures all security-critical native function references at startup, hooks outbound network APIs to block external requests, and runs a watchdog every second to verify native function purity (crypto, storage, encoding); any detected threat immediately clears all session keys and shows a security alert
 -   **Container integrity scanner** — 27 automated checks (21 VFS structural + 6 database-level) with one-click auto-repair, **Deep Clean** (flattens over-nested folder trees, repairs all metadata), and a backup prompt before any destructive operation
 -   **Settings** — three tabs: personalization, statistics, activity logs
 -   **Keyboard shortcuts** — `Delete`, `F2`, `Ctrl+A`, `Ctrl+C/X/V`, `Ctrl+S` (save in editor), `Escape`
@@ -129,7 +130,7 @@ An attacker with live access to the running browser process (e.g. malicious exte
 | `form-action` | `'none'`                    |
 | `object-src`  | `'none'`                    |
 
-`'unsafe-inline'` is absent from `script-src`. There are no inline `<script>` blocks — the docmode persistence guard (`docmode.js`) is loaded as an external file before the stylesheet. All JavaScript is loaded via `'self'`. Argon2id WASM compilation is permitted by `'wasm-unsafe-eval'`.
+`'unsafe-inline'` is absent from `script-src`. There are no inline `<script>` blocks — the docmode persistence guard (`docmode.js`) and the SafeNova Proactive runtime protection module (`daemon.js`) are loaded as external files in `<head>` before the stylesheet. All JavaScript is loaded via `'self'`. Argon2id WASM compilation is permitted by `'wasm-unsafe-eval'`.
 
 ### Server-level headers (`.server.ps1`)
 
@@ -191,6 +192,7 @@ SafeNova/
 └── js/
     ├── argon2.umd.min.js  # Argon2id WASM/JS implementation (hashwasm)
     ├── docmode.js         # Pre-CSS docmode guard (runs before stylesheet loads)
+    ├── daemon.js          # SafeNova Proactive — runtime protection module (loads in <head>, first of all)
     ├── initlog.js         # Initialization stage console logger (InitLog)
     ├── constants.js       # Shared constants (DB names, limits, chunk size), utilities, icon SVGs
     ├── db.js              # IndexedDB abstraction — SafeNovaEFS (containers / files / vfs / chunks stores)
@@ -302,6 +304,63 @@ To prevent a container from being open in two browser tabs simultaneously — wh
 When a container is unlocked, the tab writes a claim entry (`snv-open-{id}`) containing its unique tab identifier and a timestamp. A **heartbeat** refreshes the timestamp every 5 seconds. Any other tab that reads a live claim (timestamp within the 30-second TTL) before opening the same container is shown a conflict dialog offering to take over the session.
 
 On accepting the takeover, the requesting tab writes a **kick flag** into the claim entry. The original tab listens for `storage` events on this key and immediately locks itself when the flag is detected. On normal tab close, `beforeunload` and `pagehide` remove the claim entry so the container becomes available to other tabs without waiting for the TTL to expire.
+
+---
+
+## 🛡️ SafeNova Proactive
+
+SafeNova Proactive is a self-contained runtime protection module (`daemon.js`) that loads in `<head>` **before every other application script**. The application refuses to start if the guard is absent or failed to initialize.
+
+### Startup sequence
+
+1. Capture references to all security-critical native functions at the earliest possible moment — before any extension or injected code can tamper with them
+2. Install protective hooks on outbound network APIs (`fetch`, `XMLHttpRequest.prototype.open`, `navigator.sendBeacon`)
+3. Expose the `window.__snvGuard` token; `main.js` checks it before calling `App.init()`
+4. Start a 1-second watchdog interval
+
+### Real-time watchdog (every 1 s)
+
+Each tick performs two independent checks:
+
+**Hook integrity** — verifies by reference equality that the installed hooks are still the exact functions placed by the guard. If any hook was removed or swapped by a third party (extensions like Adblock routinely wrap network APIs), the guard **silently re-installs** them without firing an alert — this is expected browser extension behaviour, not a security threat.
+
+**Native function purity** — verifies that the following functions are still fully native using the captured `Function.prototype.toString` reference (immune to meta-spoofing). Any substitution fires an alert:
+
+| Function                                                               | Purpose                      |
+| ---------------------------------------------------------------------- | ---------------------------- |
+| `crypto.getRandomValues`                                               | IV / key generation          |
+| `crypto.subtle.{encrypt,decrypt,importKey,exportKey,deriveKey,digest}` | All cryptographic operations |
+| `IDBFactory.prototype.open`                                            | IndexedDB access             |
+| `Storage.prototype.{getItem,setItem,removeItem}`                       | Session key storage          |
+| `btoa` / `atob`                                                        | Base-64 encode/decode        |
+| `TextEncoder.prototype.encode`                                         | Text serialization           |
+
+### Intentionally excluded from checks
+
+| API                            | Reason                                                                                                                                                             |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `console` namespace            | Overrides are common and benign (DevTools, logging libraries)                                                                                                      |
+| `Function.prototype.toString`  | Protected via the captured `_fnToString` reference at init time; live checks cause false positives because extensions (Adblock, Dark Reader) routinely wrap it      |
+| `document.createElement`       | Extensions legitimately create elements (including `<script>`) for their content scripts; blocking this causes widespread false positives on every page load        |
+
+### Network request interception
+
+Every outbound request is validated against `window.location.origin` before it is allowed to proceed:
+
+- **`fetch`** — blocked and rejected with an error
+- **`XMLHttpRequest.prototype.open`** — blocked and throws synchronously
+- **`navigator.sendBeacon`** — blocked and returns `false`
+
+SafeNova makes no legitimate external network requests; any attempt is by definition suspicious.
+
+### Threat response
+
+When a native function purity check fails or an external network request is intercepted:
+
+1. **Immediately wipe** all `snv-*` keys from both `localStorage` and `sessionStorage` using the captured native `Storage.prototype` references (bypasses any hook that may have been placed on the Storage API by the attacker)
+2. Show a **security alert overlay** identifying the blocked operation and advising the user to audit browser extensions, with a reload button
+
+Alerts are rate-limited to one per 10 seconds to prevent alert spam while still reporting every distinct threat.
 
 ---
 
