@@ -2,6 +2,7 @@
 
 > ### Try it online: [https://safenova.dosx.su/](https://safenova.dosx.su/)
 
+<a id="what-it-is"></a>
 ## ❔ What it is
 
 SafeNova is a single-page web app that lets you create encrypted **containers** — isolated vaults where you can organize files in a folder structure, much like a regular desktop file manager. Everything is encrypted client-side before being written to storage. Nothing ever leaves your device.
@@ -16,12 +17,70 @@ Key properties:
 
 ---
 
+## 📚 Table of Contents
+
+-   [❔ What it is](#what-it-is)
+-   [🚀 Getting started](#getting-started)
+    -   [Option A — Use online version](#getting-started-online)
+    -   [Option B — Local server](#getting-started-local)
+-   [📋 Requirements](#requirements)
+-   [⚙️ Features](#features)
+-   [📁 Project structure](#project-structure)
+-   [🔒 How containers work](#how-containers-work)
+-   [📄 The `.safenova` Container Format](#container-format)
+    -   [Archive sections](#container-format-archive-sections)
+    -   [Design properties](#container-format-design-properties)
+-   [🔐 Encryption](#encryption)
+    -   [Session token security](#session-token-security)
+    -   [Current tab session](#current-tab-session)
+    -   [Stay signed in](#stay-signed-in)
+    -   [Three-source key wrapping](#three-source-key-wrapping)
+    -   [Session payload format](#session-payload-format)
+    -   [Remaining trade-off](#remaining-trade-off)
+-   [🔏 Content Security Policy](#content-security-policy)
+    -   [Meta tag](#csp-meta-tag)
+    -   [Server-level headers](#csp-server-headers)
+-   [🛡️ Cross-Tab Session Protection](#cross-tab-session-protection)
+-   [🛑 Duress Password](#duress-password)
+    -   [How it works](#duress-how-it-works)
+    -   [Why this design](#duress-why-this-design)
+    -   [Technical details](#duress-technical-details)
+-   [🔬 SafeNova Proactive](#safenova-proactive)
+    -   [Startup sequence](#proactive-startup-sequence)
+    -   [Real-time watchdog](#proactive-watchdog)
+    -   [Intentionally excluded from checks](#proactive-excluded-checks)
+    -   [Network request interception](#proactive-network-interception)
+    -   [Threat response](#proactive-threat-response)
+-   [🔍 Container Integrity Scanner](#container-integrity-scanner)
+    -   [Phase 1 — VFS structural checks](#scanner-phase-1)
+    -   [Phase 2 — Database-level checks](#scanner-phase-2)
+-   [⚡ Performance](#performance)
+    -   [Adaptive concurrency](#adaptive-concurrency)
+    -   [Bulk upload](#bulk-upload)
+    -   [ZIP export](#zip-export)
+    -   [Password change](#password-change)
+    -   [Container export](#container-export)
+    -   [Drag-and-drop performance](#drag-drop-performance)
+-   [📱 Mobile Touch Support](#mobile-touch-support)
+    -   [Long-press to drag](#mobile-long-press)
+    -   [Multi-file drag](#mobile-multi-file-drag)
+    -   [Context menu](#mobile-context-menu)
+    -   [Paste at finger position](#mobile-paste-at-finger-position)
+    -   [Overscroll](#mobile-overscroll)
+-   [💬 Community](#community)
+-   [🤝 Thanks to all contributors](#thanks)
+
+---
+
+<a id="getting-started"></a>
 ## 🚀 Getting started
 
+<a id="getting-started-online"></a>
 ### Option A — Use online version
 
 SafeNova is hosted on: [https://safenova.dosx.su/](https://safenova.dosx.su/)
 
+<a id="getting-started-local"></a>
 ### Option B — Local server
 
 A zero-dependency PowerShell server is included:
@@ -36,6 +95,16 @@ No external installs needed — it uses the Windows built-in `HttpListener`.
 
 ---
 
+<a id="requirements"></a>
+## 📋 Requirements
+
+-   A modern browser: **Chrome 90+**, **Firefox 90+**, **Safari 15+**, or **Edge 90+**
+-   Web Crypto API must be available — this requires either **HTTPS** or **`localhost`**
+-   No plugins, no extensions, no backend
+
+---
+
+<a id="features"></a>
 ## ⚙️ Features
 
 -   **Multiple containers** — each with its own password and independent storage limit (8 GB per container)
@@ -50,7 +119,7 @@ No external installs needed — it uses the Windows built-in `HttpListener`.
 -   **Quick export button** — dedicated **Export** button in the desktop toolbar provides one-click passwordless export when the export password guard is disabled
 -   **Sort & arrange** — sort icons by name, date, size, or type; drag to custom positions
 -   **Secure container deletion** — before permanent erasure, the first 8 bytes of every encrypted blob are overwritten with zeros (cryptographic pre-shredding), ensuring the AES-GCM ciphertext is irrecoverable even on storage media that lazily reclaims pages
--   **Duress password** — optional panic password that, when entered anywhere (unlock, change password, export), looks exactly like an incorrect password but silently destroys all encrypted data in the background; see [Duress Password](#-duress-password) below
+-   **Duress password** — optional panic password that, when entered anywhere (unlock, change password, export), looks exactly like an incorrect password but silently destroys all encrypted data in the background; see [Duress Password](#duress-password) below
 -   **SafeNova Proactive** — runtime protection module that loads first in `<head>`, captures all security-critical native function references at startup, hooks outbound network APIs to block external requests, and runs a watchdog every second to verify native function purity (crypto, storage, encoding); any detected threat immediately clears all session keys and shows a security alert
 -   **Container integrity scanner** — 28 automated checks (21 VFS structural + 7 database-level) with one-click auto-repair, **Deep Clean** (flattens over-nested folder trees, repairs all metadata), and a backup prompt before any destructive operation; includes file decryption verification that detects corrupted or unreadable blobs (including those silently destroyed by the duress trigger)
 -   **Settings** — three tabs: personalization, statistics, activity logs
@@ -59,127 +128,7 @@ No external installs needed — it uses the Windows built-in `HttpListener`.
 
 ---
 
-## 🔐 Encryption
-
-| Layer            | Algorithm                                              |
-| ---------------- | ------------------------------------------------------ |
-| Key derivation   | Argon2id (19 MB memory, 2 iterations, 1 thread)        |
-| File encryption  | AES-256-GCM (random 96-bit IV per file)                |
-| VFS encryption   | AES-256-GCM (same key, independent IV)                 |
-| Session tokens   | AES-256-GCM, dual-key: per-tab ephemeral or persistent |
-| Browser key wrap | HKDF-SHA-256 from fingerprint + cookie + IndexedDB     |
-| Integrity check  | AES-256-GCM verification blob authenticated on open    |
-| Duress hash      | SHA-256(random 32-byte salt ‖ password), IDB-only      |
-
-Every file is encrypted individually — each with its own freshly generated IV. The virtual filesystem (folder tree, file names, sizes, positions) is encrypted as a separate blob using the same derived key. The plaintext password is never stored; only the derived key is held in JavaScript memory for the duration of an active session.
-
-File keys are derived from passwords through **Argon2id** with OWASP-recommended minimum parameters (19 MB memory cost, 2 iterations), providing strong resistance against brute-force and GPU-accelerated attacks.
-
-### Session token security
-
-SafeNova uses a **dual-key model** for session storage — an ephemeral per-tab key and a persistent shared key — each scoped to a distinct user intent.
-
-#### Current tab session _(Recommended)_
-
-The 32-byte Argon2id key material is encrypted with **`snv-sk`** — a per-tab AES-256-GCM key stored in `sessionStorage`. `snv-sk` is itself wrap-encrypted with the same three-source HKDF key as `snv-bsk` before being written to `sessionStorage`. This means:
-
--   The session blob (`snv-s-{cid}`) lives in `sessionStorage` and is readable only by the exact tab that created it
--   Closing the tab permanently destroys `snv-sk` — no residue remains in any persistent storage
--   An attacker with access to `localStorage`, `sessionStorage`, or disk snapshots gains nothing — even a raw `sessionStorage` dump does not expose the decryption key without also possessing the browser fingerprint, the `snv-kc` cookie, and the `SafeNovaKS` IDB record
-
-This is the recommended option: the session is automatically gone as soon as the tab is closed.
-
-#### Stay signed in
-
-The key material is encrypted with **`snv-bsk`** — a shared AES-256-GCM key available to all tabs of the same browser origin.
-
-#### Three-source key wrapping
-
-Before `snv-bsk` is written to `localStorage`, it is itself encrypted with a separate _wrap key_ that is derived on-the-fly via **HKDF-SHA-256** from **three independent sources** and **never stored anywhere**:
-
-| #   | Source              | Storage                                       | Purpose                                                                                          |
-| --- | ------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| 1   | Browser fingerprint | _(computed)_                                  | `origin \0 userAgent \0 platform \0 language \0 hardwareConcurrency \0 colorDepth \0 pixelDepth` |
-| 2   | `snv-kc` cookie     | Cookie jar (`SameSite=Strict`, ~400 days TTL) | 32 random bytes, isolated from localStorage                                                      |
-| 3   | `snv-ki` record     | Separate IndexedDB `SafeNovaKS`               | 32 random bytes, independent from main `SafeNovaEFS` database                                    |
-
-```
-ikm      = fingerprint \0 cookie_bytes(32) \0 idb_bytes(32)
-wrap_key = HKDF-SHA-256( ikm, salt=0×32, info="snv-browser-wrap-v3" )
-snv-bsk (localStorage)   = IV(12) || AES-256-GCM( wrap_key, raw_bsk_bytes )
-snv-sk  (sessionStorage) = IV(12) || AES-256-GCM( wrap_key, raw_sk_bytes  )
-```
-
-Consequences:
-
--   Any tab in the **same browser** recomputes the identical fingerprint, reads the same cookie and IDB secret → identical wrap key → can decrypt `snv-bsk` and resume the session seamlessly
--   An attacker must compromise **all three storage mechanisms** simultaneously to reconstruct the wrap key — `localStorage` alone, a disk image, or a partial export will not suffice:
-    -   Copying `localStorage` without the cookie and `SafeNovaKS` database → wrap key cannot be derived → `snv-bsk` is opaque
-    -   Clearing cookies invalidates the cookie component → sessions become undecryptable
-    -   Deleting or moving the `SafeNovaKS` database invalidates the IDB component → same effect
--   The fingerprint includes `navigator.userAgent` and `navigator.platform`, binding sessions to the specific browser version and OS. **Browser updates that change the UA string will invalidate existing sessions** — the user re-enters their password once and a new session is established automatically
--   If any of the three components change (fingerprint shift, cookie clearing, IDB loss), the stored `snv-bsk` can no longer be decrypted; a new key is generated automatically and the user must re-enter the password once — any `snv-sb-{cid}` blobs encrypted with the old key are silently dropped
--   **Legacy format migration:** `snv-bsk` and `snv-sk` entries written before wrap-encryption was introduced (raw 32-byte keys, no IV prefix) are detected by their exact byte length and silently re-wrapped in the current `IV(12) || AES-GCM` format on first access — no user action required
--   The session expires after **7 days** (TTL baked into the encrypted payload), or immediately on explicit sign-out
-
-#### Session payload format
-
-Both scope types use the same blob layout: `IV(12) || AES-256-GCM(scope_key, expiry(8 bytes, uint64 LE) || raw_key(32 bytes))`. The AES-GCM call is authenticated with the container ID as additional data (`snv-session:{cid}`), preventing a blob from one container from being replayed to unlock a different container. Tab-scope sessions use `expiry = Number.MAX_SAFE_INTEGER` (no TTL — the tab's `sessionStorage` is the only lifetime bound); browser-scope sessions carry a hard 7-day expiry.
-
-#### Remaining trade-off
-
-An attacker with live access to the running browser process (e.g. malicious extension, XSS) can still call the same fingerprint function, read the cookie, and query the `SafeNovaKS` IndexedDB to derive the wrap key. The three-source wrapping layer protects against _offline_ credential theft (disk images, direct `localStorage` dumps, partial storage exports), not against in-browser code execution.
-
----
-
-## 🔒 Content Security Policy
-
-### Meta tag (inline)
-
-`index.html` declares a strict per-directive CSP via `<meta http-equiv="Content-Security-Policy">`:
-
-| Directive     | Value                       |
-| ------------- | --------------------------- |
-| `default-src` | `'none'`                    |
-| `script-src`  | `'self' 'wasm-unsafe-eval'` |
-| `style-src`   | `'self' 'unsafe-inline'`    |
-| `img-src`     | `'self' blob: data:`        |
-| `media-src`   | `blob:`                     |
-| `frame-src`   | `blob:`                     |
-| `font-src`    | `'self'`                    |
-| `connect-src` | `'self'`                    |
-| `worker-src`  | `'self' blob:`              |
-| `base-uri`    | `'self'`                    |
-| `form-action` | `'none'`                    |
-| `object-src`  | `'none'`                    |
-
-`'unsafe-inline'` is absent from `script-src`. There are no inline `<script>` blocks — the docmode persistence guard (`docmode.js`) and the SafeNova Proactive runtime protection module (`daemon.js`) are loaded as external files in `<head>` before the stylesheet. All JavaScript is loaded via `'self'`. Argon2id WASM compilation is permitted by `'wasm-unsafe-eval'`.
-
-### Server-level headers (`.server.ps1`)
-
-When running via the included PowerShell dev server, every response additionally carries:
-
-| Header                         | Value                                                          |
-| ------------------------------ | -------------------------------------------------------------- |
-| `X-Content-Type-Options`       | `nosniff`                                                      |
-| `X-Frame-Options`              | `DENY`                                                         |
-| `Referrer-Policy`              | `no-referrer`                                                  |
-| `Permissions-Policy`           | `interest-cohort=(), geolocation=(), camera=(), microphone=()` |
-| `Cross-Origin-Opener-Policy`   | `same-origin`                                                  |
-| `Cross-Origin-Embedder-Policy` | `require-corp`                                                 |
-
-`Cross-Origin-Opener-Policy: same-origin` prevents other origins from holding a reference to the app window. `Cross-Origin-Embedder-Policy: require-corp` blocks cross-origin subresource loads that lack explicit CORP headers — irrelevant in practice since all resources are same-origin, but also a prerequisite for enabling `SharedArrayBuffer` if needed in the future.
-
----
-
-## 📋 Requirements
-
--   A modern browser: **Chrome 90+**, **Firefox 90+**, **Safari 15+**, or **Edge 90+**
--   Web Crypto API must be available — this requires either **HTTPS** or **`localhost`**
--   No plugins, no extensions, no backend
-
----
-
+<a id="project-structure"></a>
 ## 📁 Project structure
 
 ```
@@ -210,6 +159,7 @@ SafeNova/
 
 ---
 
+<a id="how-containers-work"></a>
 ## 🔒 How containers work
 
 1. **Create** a container with a name and password
@@ -223,10 +173,12 @@ All container data is scoped to the current browser and device. Use **Export Con
 
 ---
 
+<a id="container-format"></a>
 ## 📄 The `.safenova` Container Format
 
 Exported containers are saved as `.safenova` files. This is a **self-contained structured archive** with a versioned, deterministic layout. It is designed so that no file content or filesystem metadata is ever present in plaintext within the archive.
 
+<a id="container-format-archive-sections"></a>
 ### Archive sections
 
 | Section                      | Role                                                                                                                                                                                                                                                                                                                                                   |
@@ -239,6 +191,7 @@ Exported containers are saved as `.safenova` files. This is a **self-contained s
 | `safenova_efs/workspace.bin` | A single contiguous block of raw ciphertext — the encrypted content of every file, concatenated end-to-end. Without the decryption key, file boundaries and content are indistinguishable                                                                                                                                                              |
 | `meta/activity_logs/0`       | _(Optional)_ The encrypted activity log, included only when the `exportWithLogs` container setting is enabled                                                                                                                                                                                                                                          |
 
+<a id="container-format-design-properties"></a>
 ### Design properties
 
 #### Zero plaintext leakage
@@ -259,47 +212,130 @@ The `version` attribute in the XML manifest distinguishes between format generat
 
 ---
 
-## ⚡ Performance
+<a id="encryption"></a>
+## 🔐 Encryption
 
-SafeNova schedules AES-GCM operations to run with maximum concurrency, taking full advantage of hardware AES acceleration exposed by the browser’s Web Crypto API.
+| Layer            | Algorithm                                              |
+| ---------------- | ------------------------------------------------------ |
+| Key derivation   | Argon2id (19 MB memory, 2 iterations, 1 thread)        |
+| File encryption  | AES-256-GCM (random 96-bit IV per file)                |
+| VFS encryption   | AES-256-GCM (same key, independent IV)                 |
+| Session tokens   | AES-256-GCM, dual-key: per-tab ephemeral or persistent |
+| Browser key wrap | HKDF-SHA-256 from fingerprint + cookie + IndexedDB     |
+| Integrity check  | AES-256-GCM verification blob authenticated on open    |
+| Duress hash      | SHA-256(random 32-byte salt ‖ password), IDB-only      |
 
-### Adaptive concurrency
+Every file is encrypted individually — each with its own freshly generated IV. The virtual filesystem (folder tree, file names, sizes, positions) is encrypted as a separate blob using the same derived key. The plaintext password is never stored; only the derived key is held in JavaScript memory for the duration of an active session.
 
-The degree of parallelism is computed once at startup:
+File keys are derived from passwords through **Argon2id** with OWASP-recommended minimum parameters (19 MB memory cost, 2 iterations), providing strong resistance against brute-force and GPU-accelerated attacks.
 
-```js
-const _CRYPTO_CONCURRENCY = Math.min(8, navigator.hardwareConcurrency || 4);
+<a id="session-token-security"></a>
+### Session token security
+
+SafeNova uses a **dual-key model** for session storage — an ephemeral per-tab key and a persistent shared key — each scoped to a distinct user intent.
+
+<a id="current-tab-session"></a>
+#### Current tab session _(Recommended)_
+
+The 32-byte Argon2id key material is encrypted with **`snv-sk`** — a per-tab AES-256-GCM key stored in `sessionStorage`. `snv-sk` is itself wrap-encrypted with the same three-source HKDF key as `snv-bsk` before being written to `sessionStorage`. This means:
+
+-   The session blob (`snv-s-{cid}`) lives in `sessionStorage` and is readable only by the exact tab that created it
+-   Closing the tab permanently destroys `snv-sk` — no residue remains in any persistent storage
+-   An attacker with access to `localStorage`, `sessionStorage`, or disk snapshots gains nothing — even a raw `sessionStorage` dump does not expose the decryption key without also possessing the browser fingerprint, the `snv-kc` cookie, and the `SafeNovaKS` IDB record
+
+This is the recommended option: the session is automatically gone as soon as the tab is closed.
+
+<a id="stay-signed-in"></a>
+#### Stay signed in
+
+The key material is encrypted with **`snv-bsk`** — a shared AES-256-GCM key available to all tabs of the same browser origin.
+
+<a id="three-source-key-wrapping"></a>
+#### Three-source key wrapping
+
+Before `snv-bsk` is written to `localStorage`, it is itself encrypted with a separate _wrap key_ that is derived on-the-fly via **HKDF-SHA-256** from **three independent sources** and **never stored anywhere**:
+
+| #   | Source              | Storage                                       | Purpose                                                                                          |
+| --- | ------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| 1   | Browser fingerprint | _(computed)_                                  | `origin \0 userAgent \0 platform \0 language \0 hardwareConcurrency \0 colorDepth \0 pixelDepth` |
+| 2   | `snv-kc` cookie     | Cookie jar (`SameSite=Strict`, ~400 days TTL) | 32 random bytes, isolated from localStorage                                                      |
+| 3   | `snv-ki` record     | Separate IndexedDB `SafeNovaKS`               | 32 random bytes, independent from main `SafeNovaEFS` database                                    |
+
+```
+ikm      = fingerprint \0 cookie_bytes(32) \0 idb_bytes(32)
+wrap_key = HKDF-SHA-256( ikm, salt=0×32, info="snv-browser-wrap-v3" )
+snv-bsk (localStorage)   = IV(12) || AES-256-GCM( wrap_key, raw_bsk_bytes )
+snv-sk  (sessionStorage) = IV(12) || AES-256-GCM( wrap_key, raw_sk_bytes  )
 ```
 
-This serves as the default batch width for all bulk encrypt/decrypt loops. On an 8-core machine, up to 8 files are processed simultaneously.
+Consequences:
 
-### Bulk upload
+-   Any tab in the **same browser** recomputes the identical fingerprint, reads the same cookie and IDB secret → identical wrap key → can decrypt `snv-bsk` and resume the session seamlessly
+-   An attacker must compromise **all three storage mechanisms** simultaneously to reconstruct the wrap key — `localStorage` alone, a disk image, or a partial export will not suffice:
+    -   Copying `localStorage` without the cookie and `SafeNovaKS` database → wrap key cannot be derived → `snv-bsk` is opaque
+    -   Clearing cookies invalidates the cookie component → sessions become undecryptable
+    -   Deleting or moving the `SafeNovaKS` database invalidates the IDB component → same effect
+-   The fingerprint includes `navigator.userAgent` and `navigator.platform`, binding sessions to the specific browser version and OS. **Browser updates that change the UA string will invalidate existing sessions** — the user re-enters their password once and a new session is established automatically
+-   If any of the three components change (fingerprint shift, cookie clearing, IDB loss), the stored `snv-bsk` can no longer be decrypted; a new key is generated automatically and the user must re-enter the password once — any `snv-sb-{cid}` blobs encrypted with the old key are silently dropped
+-   **Legacy format migration:** `snv-bsk` and `snv-sk` entries written before wrap-encryption was introduced (raw 32-byte keys, no IV prefix) are detected by their exact byte length and silently re-wrapped in the current `IV(12) || AES-GCM` format on first access — no user action required
+-   The session expires after **7 days** (TTL baked into the encrypted payload), or immediately on explicit sign-out
 
-For each batch of files the application reads all `ArrayBuffer` payloads in parallel, encrypts the batch in parallel, then writes every encrypted record to IndexedDB in a **single transaction**, eliminating the per-file transaction overhead that would otherwise dominate for large numbers of small files. Files with encrypted blobs exceeding **50 MB** are stored as split 50 MB chunks across the `chunks` object store, avoiding the browser's ~2 GB structured-clone limit on IndexedDB reads; the chunking is fully transparent to all read paths.
+<a id="session-payload-format"></a>
+#### Session payload format
 
-### ZIP export
+Both scope types use the same blob layout: `IV(12) || AES-256-GCM(scope_key, expiry(8 bytes, uint64 LE) || raw_key(32 bytes))`. The AES-GCM call is authenticated with the container ID as additional data (`snv-session:{cid}`), preventing a blob from one container from being replayed to unlock a different container. Tab-scope sessions use `expiry = Number.MAX_SAFE_INTEGER` (no TTL — the tab's `sessionStorage` is the only lifetime bound); browser-scope sessions carry a hard 7-day expiry.
 
-Exporting files as an archive uses `DB.getFilesByIds()` — a single IndexedDB read transaction that fetches all required records concurrently via parallel `IDBObjectStore.get()` calls. Decryption of all records is then dispatched in one `Promise.allSettled` call rather than being serialised through fixed-size batches.
+<a id="remaining-trade-off"></a>
+#### Remaining trade-off
 
-### Password change
-
-Re-encrypting a container under a new key dispatches all `decrypt → encrypt` pairs for every file **fully in parallel**. Results are accumulated and written back in a single `saveFiles()` batch, reducing total elapsed time from `O(n × sequential awaits)` to approximately one parallel round-trip plus one database write.
-
-### Container export
-
-Exporting a `.safenova` file requires no single contiguous memory allocation regardless of container size. The builder receives each file blob as an individual `Uint8Array` chunk (no concatenation into a giant `workspaceBin`), computes CRC32 incrementally over the chunk list via `_crc32multi()`, and emits an **array of small output parts**. `downloadBuf()` passes that parts array directly to the `Blob` constructor — the browser stitches the pieces together internally without requiring a duplicate allocation. The peak RAM footprint for an N-gigabyte export is approximately N bytes (the data already held in IndexedDB), rather than the previous ~3× N that caused `Array buffer allocation failed` errors for 3 GB+ containers.
-
-### Drag-and-drop performance (large folders)
-
-Icon dragging in folders with many files previously re-iterated all `VFS.children()` results on **every** `mousemove` / `touchmove` frame (~60 fps) to rebuild the occupied-cell map. With hundreds of files this became a measurable bottleneck. The hot path is now O(1) per frame:
-
--   **Touch drag** — the occupied map is built once at drag-start (when the 400 ms long-press fires) and reused throughout the gesture
--   **Mouse drag** — `srcOccupied` is built once at drag-start; `winOccCached` / `deskOccCached` are computed once when the pointer first enters a drop target, not on every frame
--   **Snap preview throttle** — snap-preview positions are recomputed only when the pointer crosses a grid cell boundary (96 px steps), not on every pixel movement
--   **No full map clone** — `_showPreviews` uses a small `extra` overlay Map (one entry per selected item) instead of cloning the full `occMap` on each call; `_snapFreeCell` accepts that overlay as an optional second map and checks both without merging them
+An attacker with live access to the running browser process (e.g. malicious extension, XSS) can still call the same fingerprint function, read the cookie, and query the `SafeNovaKS` IndexedDB to derive the wrap key. The three-source wrapping layer protects against _offline_ credential theft (disk images, direct `localStorage` dumps, partial storage exports), not against in-browser code execution.
 
 ---
 
+<a id="content-security-policy"></a>
+## 🔒 Content Security Policy
+
+<a id="csp-meta-tag"></a>
+### Meta tag (inline)
+
+`index.html` declares a strict per-directive CSP via `<meta http-equiv="Content-Security-Policy">`:
+
+| Directive     | Value                       |
+| ------------- | --------------------------- |
+| `default-src` | `'none'`                    |
+| `script-src`  | `'self' 'wasm-unsafe-eval'` |
+| `style-src`   | `'self' 'unsafe-inline'`    |
+| `img-src`     | `'self' blob: data:`        |
+| `media-src`   | `blob:`                     |
+| `frame-src`   | `blob:`                     |
+| `font-src`    | `'self'`                    |
+| `connect-src` | `'self'`                    |
+| `worker-src`  | `'self' blob:`              |
+| `base-uri`    | `'self'`                    |
+| `form-action` | `'none'`                    |
+| `object-src`  | `'none'`                    |
+
+`'unsafe-inline'` is absent from `script-src`. There are no inline `<script>` blocks — the docmode persistence guard (`docmode.js`) and the SafeNova Proactive runtime protection module (`daemon.js`) are loaded as external files in `<head>` before the stylesheet. All JavaScript is loaded via `'self'`. Argon2id WASM compilation is permitted by `'wasm-unsafe-eval'`.
+
+<a id="csp-server-headers"></a>
+### Server-level headers (`.server.ps1`)
+
+When running via the included PowerShell dev server, every response additionally carries:
+
+| Header                         | Value                                                          |
+| ------------------------------ | -------------------------------------------------------------- |
+| `X-Content-Type-Options`       | `nosniff`                                                      |
+| `X-Frame-Options`              | `DENY`                                                         |
+| `Referrer-Policy`              | `no-referrer`                                                  |
+| `Permissions-Policy`           | `interest-cohort=(), geolocation=(), camera=(), microphone=()` |
+| `Cross-Origin-Opener-Policy`   | `same-origin`                                                  |
+| `Cross-Origin-Embedder-Policy` | `require-corp`                                                 |
+
+`Cross-Origin-Opener-Policy: same-origin` prevents other origins from holding a reference to the app window. `Cross-Origin-Embedder-Policy: require-corp` blocks cross-origin subresource loads that lack explicit CORP headers — irrelevant in practice since all resources are same-origin, but also a prerequisite for enabling `SharedArrayBuffer` if needed in the future.
+
+---
+
+<a id="cross-tab-session-protection"></a>
 ## 🛡️ Cross-Tab Session Protection
 
 To prevent a container from being open in two browser tabs simultaneously — which would risk conflicting VFS writes — SafeNova maintains a lightweight **session lock** in `localStorage`.
@@ -310,10 +346,12 @@ On accepting the takeover, the requesting tab writes a **kick flag** into the cl
 
 ---
 
+<a id="duress-password"></a>
 ## 🛑 Duress Password
 
 The duress password is a secondary password you can set for any container. It is designed for situations where you are forced to provide your password under coercion.
 
+<a id="duress-how-it-works"></a>
 ### How it works
 
 1. You set a duress password in **Settings → Danger Zone** (it must differ from your main password)
@@ -322,12 +360,14 @@ The duress password is a secondary password you can set for any container. It is
 4. The duress hash and export cache are erased from the database, leaving no trace that a duress password ever existed
 5. Later, when the real password is entered, the container opens normally — the folder tree and file names are intact — but every file is unreadable, indistinguishable from natural storage corruption
 
+<a id="duress-why-this-design"></a>
 ### Why this design
 
 An attacker watching over your shoulder sees exactly what they’d see with any wrong password — an error message. There is no special screen, no empty vault, nothing that reveals a duress mechanism exists at all. The destruction is invisible and happens before the “incorrect” error is shown.
 
 Because the real password still works, you can unlock the container afterward to confirm the damage. The built-in **integrity scanner** will detect that files cannot be decrypted and can clean up the broken entries.
 
+<a id="duress-technical-details"></a>
 ### Technical details
 
 -   The duress hash is stored in IndexedDB as `SHA-256(random_32‑byte_salt ‖ password)` — never exported to `.safenova` files
@@ -338,10 +378,12 @@ Because the real password still works, you can unlock the container afterward to
 
 ---
 
+<a id="safenova-proactive"></a>
 ## 🛡️ SafeNova Proactive
 
 SafeNova Proactive is a self-contained runtime protection module (`daemon.js`) that loads in `<head>` **before every other application script**. The application refuses to start if the guard is absent or failed to initialize.
 
+<a id="proactive-startup-sequence"></a>
 ### Startup sequence
 
 1. Capture references to all security-critical native functions at the earliest possible moment — before any extension or injected code can tamper with them
@@ -349,6 +391,7 @@ SafeNova Proactive is a self-contained runtime protection module (`daemon.js`) t
 3. Expose the `window.__snvGuard` token; `main.js` checks it before calling `App.init()`
 4. Start a 1-second watchdog interval
 
+<a id="proactive-watchdog"></a>
 ### Real-time watchdog (every 1 s)
 
 Each tick performs two independent checks:
@@ -366,6 +409,7 @@ Each tick performs two independent checks:
 | `btoa` / `atob`                                                        | Base-64 encode/decode        |
 | `TextEncoder.prototype.encode`                                         | Text serialization           |
 
+<a id="proactive-excluded-checks"></a>
 ### Intentionally excluded from checks
 
 | API                           | Reason                                                                                                                                                         |
@@ -374,6 +418,7 @@ Each tick performs two independent checks:
 | `Function.prototype.toString` | Protected via the captured `_fnToString` reference at init time; live checks cause false positives because extensions (Adblock, Dark Reader) routinely wrap it |
 | `document.createElement`      | Extensions legitimately create elements (including `<script>`) for their content scripts; blocking this causes widespread false positives on every page load   |
 
+<a id="proactive-network-interception"></a>
 ### Network request interception
 
 Every outbound request is validated against `window.location.origin` before it is allowed to proceed:
@@ -384,6 +429,7 @@ Every outbound request is validated against `window.location.origin` before it i
 
 SafeNova makes no legitimate external network requests; any attempt is by definition suspicious.
 
+<a id="proactive-threat-response"></a>
 ### Threat response
 
 When a native function purity check fails or an external network request is intercepted:
@@ -395,36 +441,12 @@ Alerts are rate-limited to one per 10 seconds to prevent alert spam while still 
 
 ---
 
-## 📱 Mobile Touch Support
-
-SafeNova is fully usable on touchscreen devices (Android Chrome, iOS Safari). All gesture interactions work on real hardware, not only in DevTools device emulation.
-
-### Long-press to drag
-
-Holding a finger on an icon for **400 ms** activates drag mode (haptic feedback where the OS supports it). The `touchstart` handler is registered as `{ passive: false }` on the icon area and immediately calls `e.preventDefault()` when the touch lands on an icon. This suppresses the native Android long-press gesture (which would otherwise fire `touchcancel` + `contextmenu` at ~500 ms and silently kill the drag). Scrolling on empty area is unaffected — `preventDefault` is only called when a `.file-item` is the touch target, and `.file-item` elements carry `touch-action: none` in CSS to prevent the browser's pan gesture recognizer from competing.
-
-### Multi-file drag
-
-All items in the current selection are dragged simultaneously. Each selected icon follows the same displacement vector as the primary icon. Snap previews are shown for every item in the selection, offset relative to one another to reflect final grid positions.
-
-### Context menu
-
-A short tap (< 350 ms) on an icon opens the context menu. A long press (≥ 400 ms) starts a drag instead of opening the menu. The two actions are mutually exclusive — if the native `contextmenu` event fires while a drag is already active, it is suppressed; if it fires before the drag timer completes, the timer is cancelled.
-
-### Paste at finger position
-
-When **Paste** is triggered from the context menu on a touch device, the items are placed at the position where the menu was opened, rather than defaulting to the origin. The context screen position (`App._ctxScreenPos`) is captured when the menu action is confirmed, and each pasted item is placed via `_snapFreeCell` relative to that position.
-
-### Overscroll
-
-`overscroll-behavior: none` is applied to `.desktop-area` and `.fw-area` to prevent pull-to-refresh and iOS overscroll bounce from interfering with drag gestures.
-
----
-
+<a id="container-integrity-scanner"></a>
 ## 🛡️ Container Integrity Scanner
 
 The built-in scanner performs a deep analysis of the virtual disk image, encrypted file table, folder hierarchy, desktop layout, and workspace environment. It runs **28 checks** in two phases:
 
+<a id="scanner-phase-1"></a>
 ### Phase 1 — VFS structural checks (21 steps, synchronous)
 
 | #   | Check                        | Repairs                                                                        |
@@ -451,6 +473,7 @@ The built-in scanner performs a deep analysis of the virtual disk image, encrypt
 | 20  | Folder depth analysis        | O(n) memoized; warns when nesting > 50 levels                                  |
 | 21  | Node count summary           | Informational — file/folder/position counts                                    |
 
+<a id="scanner-phase-2"></a>
 ### Phase 2 — Database-level checks (7 steps, async)
 
 | #   | Check                        | Repairs                                                                                                             |
@@ -477,6 +500,87 @@ After Deep Clean, a verification scan runs automatically. A backup is offered be
 
 ---
 
+<a id="performance"></a>
+## ⚡ Performance
+
+SafeNova schedules AES-GCM operations to run with maximum concurrency, taking full advantage of hardware AES acceleration exposed by the browser’s Web Crypto API.
+
+<a id="adaptive-concurrency"></a>
+### Adaptive concurrency
+
+The degree of parallelism is computed once at startup:
+
+```js
+const _CRYPTO_CONCURRENCY = Math.min(8, navigator.hardwareConcurrency || 4);
+```
+
+This serves as the default batch width for all bulk encrypt/decrypt loops. On an 8-core machine, up to 8 files are processed simultaneously.
+
+<a id="bulk-upload"></a>
+### Bulk upload
+
+For each batch of files the application reads all `ArrayBuffer` payloads in parallel, encrypts the batch in parallel, then writes every encrypted record to IndexedDB in a **single transaction**, eliminating the per-file transaction overhead that would otherwise dominate for large numbers of small files. Files with encrypted blobs exceeding **50 MB** are stored as split 50 MB chunks across the `chunks` object store, avoiding the browser's ~2 GB structured-clone limit on IndexedDB reads; the chunking is fully transparent to all read paths.
+
+<a id="zip-export"></a>
+### ZIP export
+
+Exporting files as an archive uses `DB.getFilesByIds()` — a single IndexedDB read transaction that fetches all required records concurrently via parallel `IDBObjectStore.get()` calls. Decryption of all records is then dispatched in one `Promise.allSettled` call rather than being serialised through fixed-size batches.
+
+<a id="password-change"></a>
+### Password change
+
+Re-encrypting a container under a new key dispatches all `decrypt → encrypt` pairs for every file **fully in parallel**. Results are accumulated and written back in a single `saveFiles()` batch, reducing total elapsed time from `O(n × sequential awaits)` to approximately one parallel round-trip plus one database write.
+
+<a id="container-export"></a>
+### Container export
+
+Exporting a `.safenova` file requires no single contiguous memory allocation regardless of container size. The builder receives each file blob as an individual `Uint8Array` chunk (no concatenation into a giant `workspaceBin`), computes CRC32 incrementally over the chunk list via `_crc32multi()`, and emits an **array of small output parts**. `downloadBuf()` passes that parts array directly to the `Blob` constructor — the browser stitches the pieces together internally without requiring a duplicate allocation. The peak RAM footprint for an N-gigabyte export is approximately N bytes (the data already held in IndexedDB), rather than the previous ~3× N that caused `Array buffer allocation failed` errors for 3 GB+ containers.
+
+<a id="drag-drop-performance"></a>
+### Drag-and-drop performance (large folders)
+
+Icon dragging in folders with many files previously re-iterated all `VFS.children()` results on **every** `mousemove` / `touchmove` frame (~60 fps) to rebuild the occupied-cell map. With hundreds of files this became a measurable bottleneck. The hot path is now O(1) per frame:
+
+-   **Touch drag** — the occupied map is built once at drag-start (when the 400 ms long-press fires) and reused throughout the gesture
+-   **Mouse drag** — `srcOccupied` is built once at drag-start; `winOccCached` / `deskOccCached` are computed once when the pointer first enters a drop target, not on every frame
+-   **Snap preview throttle** — snap-preview positions are recomputed only when the pointer crosses a grid cell boundary (96 px steps), not on every pixel movement
+-   **No full map clone** — `_showPreviews` uses a small `extra` overlay Map (one entry per selected item) instead of cloning the full `occMap` on each call; `_snapFreeCell` accepts that overlay as an optional second map and checks both without merging them
+
+---
+
+<a id="mobile-touch-support"></a>
+## 📱 Mobile Touch Support
+
+SafeNova is fully usable on touchscreen devices (Android Chrome, iOS Safari). All gesture interactions work on real hardware, not only in DevTools device emulation.
+
+<a id="mobile-long-press"></a>
+### Long-press to drag
+
+Holding a finger on an icon for **400 ms** activates drag mode (haptic feedback where the OS supports it). The `touchstart` handler is registered as `{ passive: false }` on the icon area and immediately calls `e.preventDefault()` when the touch lands on an icon. This suppresses the native Android long-press gesture (which would otherwise fire `touchcancel` + `contextmenu` at ~500 ms and silently kill the drag). Scrolling on empty area is unaffected — `preventDefault` is only called when a `.file-item` is the touch target, and `.file-item` elements carry `touch-action: none` in CSS to prevent the browser's pan gesture recognizer from competing.
+
+<a id="mobile-multi-file-drag"></a>
+### Multi-file drag
+
+All items in the current selection are dragged simultaneously. Each selected icon follows the same displacement vector as the primary icon. Snap previews are shown for every item in the selection, offset relative to one another to reflect final grid positions.
+
+<a id="mobile-context-menu"></a>
+### Context menu
+
+A short tap (< 350 ms) on an icon opens the context menu. A long press (≥ 400 ms) starts a drag instead of opening the menu. The two actions are mutually exclusive — if the native `contextmenu` event fires while a drag is already active, it is suppressed; if it fires before the drag timer completes, the timer is cancelled.
+
+<a id="mobile-paste-at-finger-position"></a>
+### Paste at finger position
+
+When **Paste** is triggered from the context menu on a touch device, the items are placed at the position where the menu was opened, rather than defaulting to the origin. The context screen position (`App._ctxScreenPos`) is captured when the menu action is confirmed, and each pasted item is placed via `_snapFreeCell` relative to that position.
+
+<a id="mobile-overscroll"></a>
+### Overscroll
+
+`overscroll-behavior: none` is applied to `.desktop-area` and `.fw-area` to prevent pull-to-refresh and iOS overscroll bounce from interfering with drag gestures.
+
+---
+
+<a id="community"></a>
 ## 💬 Community
 
 Have questions, ideas, or just want to chat? Here's where to find us:
@@ -485,6 +589,7 @@ Have questions, ideas, or just want to chat? Here's where to find us:
 
 ---
 
+<a id="thanks"></a>
 ## 🤝 Thanks to all contributors
 
 <a href="https://github.com/DosX-dev/SafeNova/graphs/contributors">
