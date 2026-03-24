@@ -195,7 +195,7 @@ SafeNova/
 └── js/
     ├── argon2.umd.min.js  # Argon2id WASM/JS implementation (hashwasm)
     ├── docmode.js         # Pre-CSS docmode guard (runs before stylesheet loads)
-    ├── daemon.js          # SafeNova Proactive — runtime protection module (loads in <head>, first of all)
+    ├── daemon.js          # SafeNova Proactive — runtime protection module (loads first of all)
     ├── initlog.js         # Initialization stage console logger (InitLog)
     ├── constants.js       # Shared constants (DB names, limits, chunk size), utilities, icon SVGs, duress hash helpers
     ├── db.js              # IndexedDB abstraction — SafeNovaEFS (containers / files / vfs / chunks stores);
@@ -204,7 +204,7 @@ SafeNova/
     ├── state.js           # App state singleton — key, session encrypt/decrypt, three-source wrap key
     ├── home.js            # Container management: create, unlock, import, export, change password
     ├── desktop.js         # Desktop UI: icons, folder windows, drag & drop, integrity scanner
-    ├── fileops.js         # File operations: upload, download, open, copy/paste, rename, delete, ZIP export; `_updateExportCache()` pre-encrypts the file manifest for passwordless export; `_wrapExportCache` / `_unwrapExportCache` use a per-container HKDF key for browser-independent cache protection
+    ├── fileops.js         # File operations: upload, download, open, copy/paste, rename, delete, ZIP export; export cache management for passwordless export
     └── main.js            # App boot, event binding, console security warning
 ```
 
@@ -216,7 +216,7 @@ SafeNova/
 2. **Unlock** the container — Argon2id derives the key from your password
 3. Files you upload are encrypted with AES-256-GCM before being saved to IndexedDB
 4. The virtual filesystem (folder tree + icon positions) is also encrypted and saved separately
-5. **Lock** the container — if the **Export password guard** setting is disabled, the derived key is first used to pre-encrypt the file manifest (`_exportCache`); the encrypted manifest is then wrapped with a key derived deterministically from the container’s Argon2id salt via HKDF-SHA-256 (`info="snv-export-cache-v1"`), providing obfuscation against direct IDB inspection while remaining fully browser-independent; the derived container key is then wiped from memory
+5. **Lock** the container — the derived container key is wiped from memory; if the **Export password guard** setting is disabled, the pre-generated `_exportCache` (built when the setting was disabled and kept up to date after every file operation) remains in IndexedDB, ready for the next passwordless export
 6. **Delete** the container — first, the first 8 bytes of every encrypted blob are overwritten with zeros (cryptographic pre-shredding); then all encrypted records, the VFS blob, and the container metadata are permanently deleted from IndexedDB
 
 All container data is scoped to the current browser and device. Use **Export Container** to back up or transfer to another device.
