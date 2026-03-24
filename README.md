@@ -54,7 +54,7 @@ No external installs needed — it uses the Windows built-in `HttpListener`.
 -   **SafeNova Proactive** — runtime protection module that loads first in `<head>`, captures all security-critical native function references at startup, hooks outbound network APIs to block external requests, and runs a watchdog every second to verify native function purity (crypto, storage, encoding); any detected threat immediately clears all session keys and shows a security alert
 -   **Container integrity scanner** — 28 automated checks (21 VFS structural + 7 database-level) with one-click auto-repair, **Deep Clean** (flattens over-nested folder trees, repairs all metadata), and a backup prompt before any destructive operation; includes file decryption verification that detects corrupted or unreadable blobs (including those silently destroyed by the duress trigger)
 -   **Settings** — three tabs: personalization, statistics, activity logs
--   **Keyboard shortcuts** — `Delete`, `F2`, `Ctrl+A`, `Ctrl+C/X/V`, `Ctrl+S` (save in editor), `Escape`
+-   **Keyboard shortcuts** — `Delete`, `F2`, `Ctrl+A`, `Ctrl+C/X/V`, `Ctrl+S` (save in editor), `Escape`, `End` (lock container — only when focus is not in a text field)
 -   **Mobile-friendly** — long-press to drag icons, rubber-band selection, single/double-tap gestures, paste at finger position, multi-file drag with per-item snap previews
 
 ---
