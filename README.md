@@ -69,6 +69,7 @@ Key properties:
     -   [Context menu](#mobile-context-menu)
     -   [Paste at finger position](#mobile-paste-at-finger-position)
     -   [Overscroll](#mobile-overscroll)
+-   [🛠️ Contribute](#contribute)
 -   [💬 Community](#community)
 -   [🤝 Thanks to all contributors](#thanks)
 
@@ -671,6 +672,16 @@ When **Paste** is triggered from the context menu on a touch device, the items a
 ### Overscroll
 
 `overscroll-behavior: none` is applied to `.desktop-area` and `.fw-area` to prevent pull-to-refresh and iOS overscroll bounce from interfering with drag gestures.
+
+---
+
+<a id="contribute"></a>
+
+## 🛠️ Contributing
+
+If you want to contribute check our Contributions guideline first:
+
+-   **Contribution guideline**: You find it [here](https://github.com/DosX-dev/SafeNova/blob/main/CONTRIBUTING.md)
 
 ---
 
