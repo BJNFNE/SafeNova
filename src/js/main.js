@@ -418,6 +418,8 @@ window.addEventListener('pagehide', _onTabUnload);
     document.addEventListener('mouseout', e => {
         const hint = e.target.closest('.settings-hint');
         if (!hint) return;
+        // Cursor moved to a child element of the same hint — don't destroy
+        if (hint.contains(e.relatedTarget)) return;
         if (_stip) { _stip.remove(); _stip = null; }
     });
 })();
