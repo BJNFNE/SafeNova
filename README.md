@@ -412,7 +412,7 @@ Because the real password still works, you can unlock the container afterward to
 
 SafeNova Proactive is a self-contained **anti-tamper runtime integrity guard** (`daemon.js`) that loads in `<head>` **before every other application script**. Its threat model is Self-XSS and malicious browser extensions (MV2 `document_start` content scripts, cosmetic-filter injections): both classes of attack require modifying the JavaScript runtime environment in a way that can be detected by capturing native references before any attacker code runs. The application refuses to start if the guard is absent or failed to initialize.
 
-> **Silent by design.** Proactive runs entirely in the background with zero user-visible presence during normal operation. No indicators, no UI overlays, no interaction required — just quiet, constant verification of the cryptographic runtime underneath the application. Think of it as an immune system rather than antivirus: always active, completely invisible, and only surfaces when something genuinely suspicious is detected. The application loads and responds exactly as if Proactive were not there — because when everything checks out, it truly isn’t.
+> ![](./pics/screenshot_proactive.png) > **Silent by design.** Proactive runs entirely in the background with zero user-visible presence during normal operation. No indicators, no UI overlays, no interaction required — just quiet, constant verification of the cryptographic runtime underneath the application. Think of it as an immune system rather than antivirus: always active, completely invisible, and only surfaces when something genuinely suspicious is detected. The application loads and responds exactly as if Proactive were not there — because when everything checks out, it truly isn’t.
 
 <a id="proactive-startup-sequence"></a>
 
@@ -524,6 +524,8 @@ Alerts are rate-limited to one per 10 seconds to prevent alert spam while still 
 <a id="container-integrity-scanner"></a>
 
 ## 🛡️ Container Integrity Scanner
+
+> ![](./pics/screenshot_integrity_scanner.png)
 
 The built-in scanner performs a deep analysis of the virtual disk image, encrypted file table, folder hierarchy, desktop layout, and workspace environment. It runs **28 checks** in two phases:
 
