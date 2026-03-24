@@ -3,6 +3,7 @@
 > ### Try it online: [https://safenova.dosx.su/](https://safenova.dosx.su/)
 
 <a id="what-it-is"></a>
+
 ## ❔ What it is
 
 SafeNova is a single-page web app that lets you create encrypted **containers** — isolated vaults where you can organize files in a folder structure, much like a regular desktop file manager. Everything is encrypted client-side before being written to storage. Nothing ever leaves your device.
@@ -48,6 +49,7 @@ Key properties:
 -   [🔬 SafeNova Proactive](#safenova-proactive)
     -   [Startup sequence](#proactive-startup-sequence)
     -   [Real-time watchdog](#proactive-watchdog)
+    -   [Watchdog resilience](#proactive-watchdog-resilience)
     -   [Intentionally excluded from checks](#proactive-excluded-checks)
     -   [Network request interception](#proactive-network-interception)
     -   [Threat response](#proactive-threat-response)
@@ -73,14 +75,17 @@ Key properties:
 ---
 
 <a id="getting-started"></a>
+
 ## 🚀 Getting started
 
 <a id="getting-started-online"></a>
+
 ### Option A — Use online version
 
 SafeNova is hosted on: [https://safenova.dosx.su/](https://safenova.dosx.su/)
 
 <a id="getting-started-local"></a>
+
 ### Option B — Local server
 
 A zero-dependency PowerShell server is included:
@@ -96,6 +101,7 @@ No external installs needed — it uses the Windows built-in `HttpListener`.
 ---
 
 <a id="requirements"></a>
+
 ## 📋 Requirements
 
 -   A modern browser: **Chrome 90+**, **Firefox 90+**, **Safari 15+**, or **Edge 90+**
@@ -105,6 +111,7 @@ No external installs needed — it uses the Windows built-in `HttpListener`.
 ---
 
 <a id="features"></a>
+
 ## ⚙️ Features
 
 -   **Multiple containers** — each with its own password and independent storage limit (8 GB per container)
@@ -120,7 +127,7 @@ No external installs needed — it uses the Windows built-in `HttpListener`.
 -   **Sort & arrange** — sort icons by name, date, size, or type; drag to custom positions
 -   **Secure container deletion** — before permanent erasure, the first 8 bytes of every encrypted blob are overwritten with zeros (cryptographic pre-shredding), ensuring the AES-GCM ciphertext is irrecoverable even on storage media that lazily reclaims pages
 -   **Duress password** — optional panic password that, when entered anywhere (unlock, change password, export), looks exactly like an incorrect password but silently destroys all encrypted data in the background; see [Duress Password](#duress-password) below
--   **SafeNova Proactive** — runtime protection module that loads first in `<head>`, captures all security-critical native function references at startup, hooks outbound network APIs to block external requests, and runs a watchdog every second to verify native function purity (crypto, storage, encoding); any detected threat immediately clears all session keys and shows a security alert
+-   **SafeNova Proactive** — runtime protection module that loads first in `<head>`, captures all security-critical native function references at startup (crypto, storage, encoding, typed arrays, Blob/URL, compression, timers), validates every capture is truly native (pre-capture tampering guard), hooks outbound network APIs to block external requests, and runs a triple-redundant watchdog (`setInterval` + recursive `setTimeout` + `requestAnimationFrame` chain) with timer-ID protection and a dead man's switch heartbeat — if the watchdog is killed, the app auto-locks all containers
 -   **Container integrity scanner** — 28 automated checks (21 VFS structural + 7 database-level) with one-click auto-repair, **Deep Clean** (flattens over-nested folder trees, repairs all metadata), and a backup prompt before any destructive operation; includes file decryption verification that detects corrupted or unreadable blobs (including those silently destroyed by the duress trigger)
 -   **Settings** — three tabs: personalization, statistics, activity logs
 -   **Keyboard shortcuts** — `Delete`, `F2`, `Ctrl+A`, `Ctrl+C/X/V`, `Ctrl+S` (save in editor), `Escape`, `End` (lock container — only when focus is not in a text field)
@@ -129,6 +136,7 @@ No external installs needed — it uses the Windows built-in `HttpListener`.
 ---
 
 <a id="project-structure"></a>
+
 ## 📁 Project structure
 
 ```
@@ -160,6 +168,7 @@ SafeNova/
 ---
 
 <a id="how-containers-work"></a>
+
 ## 🔒 How containers work
 
 1. **Create** a container with a name and password
@@ -174,11 +183,13 @@ All container data is scoped to the current browser and device. Use **Export Con
 ---
 
 <a id="container-format"></a>
+
 ## 📄 The `.safenova` Container Format
 
 Exported containers are saved as `.safenova` files. This is a **self-contained structured archive** with a versioned, deterministic layout. It is designed so that no file content or filesystem metadata is ever present in plaintext within the archive.
 
 <a id="container-format-archive-sections"></a>
+
 ### Archive sections
 
 | Section                      | Role                                                                                                                                                                                                                                                                                                                                                   |
@@ -192,6 +203,7 @@ Exported containers are saved as `.safenova` files. This is a **self-contained s
 | `meta/activity_logs/0`       | _(Optional)_ The encrypted activity log, included only when the `exportWithLogs` container setting is enabled                                                                                                                                                                                                                                          |
 
 <a id="container-format-design-properties"></a>
+
 ### Design properties
 
 #### Zero plaintext leakage
@@ -213,6 +225,7 @@ The `version` attribute in the XML manifest distinguishes between format generat
 ---
 
 <a id="encryption"></a>
+
 ## 🔐 Encryption
 
 | Layer            | Algorithm                                              |
@@ -230,11 +243,13 @@ Every file is encrypted individually — each with its own freshly generated IV.
 File keys are derived from passwords through **Argon2id** with OWASP-recommended minimum parameters (19 MB memory cost, 2 iterations), providing strong resistance against brute-force and GPU-accelerated attacks.
 
 <a id="session-token-security"></a>
+
 ### Session token security
 
 SafeNova uses a **dual-key model** for session storage — an ephemeral per-tab key and a persistent shared key — each scoped to a distinct user intent.
 
 <a id="current-tab-session"></a>
+
 #### Current tab session _(Recommended)_
 
 The 32-byte Argon2id key material is encrypted with **`snv-sk`** — a per-tab AES-256-GCM key stored in `sessionStorage`. `snv-sk` is itself wrap-encrypted with the same three-source HKDF key as `snv-bsk` before being written to `sessionStorage`. This means:
@@ -246,11 +261,13 @@ The 32-byte Argon2id key material is encrypted with **`snv-sk`** — a per-tab A
 This is the recommended option: the session is automatically gone as soon as the tab is closed.
 
 <a id="stay-signed-in"></a>
+
 #### Stay signed in
 
 The key material is encrypted with **`snv-bsk`** — a shared AES-256-GCM key available to all tabs of the same browser origin.
 
 <a id="three-source-key-wrapping"></a>
+
 #### Three-source key wrapping
 
 Before `snv-bsk` is written to `localStorage`, it is itself encrypted with a separate _wrap key_ that is derived on-the-fly via **HKDF-SHA-256** from **three independent sources** and **never stored anywhere**:
@@ -281,11 +298,13 @@ Consequences:
 -   The session expires after **7 days** (TTL baked into the encrypted payload), or immediately on explicit sign-out
 
 <a id="session-payload-format"></a>
+
 #### Session payload format
 
 Both scope types use the same blob layout: `IV(12) || AES-256-GCM(scope_key, expiry(8 bytes, uint64 LE) || raw_key(32 bytes))`. The AES-GCM call is authenticated with the container ID as additional data (`snv-session:{cid}`), preventing a blob from one container from being replayed to unlock a different container. Tab-scope sessions use `expiry = Number.MAX_SAFE_INTEGER` (no TTL — the tab's `sessionStorage` is the only lifetime bound); browser-scope sessions carry a hard 7-day expiry.
 
 <a id="remaining-trade-off"></a>
+
 #### Remaining trade-off
 
 An attacker with live access to the running browser process (e.g. malicious extension, XSS) can still call the same fingerprint function, read the cookie, and query the `SafeNovaKS` IndexedDB to derive the wrap key. The three-source wrapping layer protects against _offline_ credential theft (disk images, direct `localStorage` dumps, partial storage exports), not against in-browser code execution.
@@ -293,9 +312,11 @@ An attacker with live access to the running browser process (e.g. malicious exte
 ---
 
 <a id="content-security-policy"></a>
+
 ## 🔒 Content Security Policy
 
 <a id="csp-meta-tag"></a>
+
 ### Meta tag (inline)
 
 `index.html` declares a strict per-directive CSP via `<meta http-equiv="Content-Security-Policy">`:
@@ -318,6 +339,7 @@ An attacker with live access to the running browser process (e.g. malicious exte
 `'unsafe-inline'` is absent from `script-src`. There are no inline `<script>` blocks — the docmode persistence guard (`docmode.js`) and the SafeNova Proactive runtime protection module (`daemon.js`) are loaded as external files in `<head>` before the stylesheet. All JavaScript is loaded via `'self'`. Argon2id WASM compilation is permitted by `'wasm-unsafe-eval'`.
 
 <a id="csp-server-headers"></a>
+
 ### Server-level headers (`.server.ps1`)
 
 When running via the included PowerShell dev server, every response additionally carries:
@@ -336,6 +358,7 @@ When running via the included PowerShell dev server, every response additionally
 ---
 
 <a id="cross-tab-session-protection"></a>
+
 ## 🛡️ Cross-Tab Session Protection
 
 To prevent a container from being open in two browser tabs simultaneously — which would risk conflicting VFS writes — SafeNova maintains a lightweight **session lock** in `localStorage`.
@@ -347,11 +370,13 @@ On accepting the takeover, the requesting tab writes a **kick flag** into the cl
 ---
 
 <a id="duress-password"></a>
+
 ## 🛑 Duress Password
 
 The duress password is a secondary password you can set for any container. It is designed for situations where you are forced to provide your password under coercion.
 
 <a id="duress-how-it-works"></a>
+
 ### How it works
 
 1. You set a duress password in **Settings → Danger Zone** (it must differ from your main password)
@@ -361,6 +386,7 @@ The duress password is a secondary password you can set for any container. It is
 5. Later, when the real password is entered, the container opens normally — the folder tree and file names are intact — but every file is unreadable, indistinguishable from natural storage corruption
 
 <a id="duress-why-this-design"></a>
+
 ### Why this design
 
 An attacker watching over your shoulder sees exactly what they’d see with any wrong password — an error message. There is no special screen, no empty vault, nothing that reveals a duress mechanism exists at all. The destruction is invisible and happens before the “incorrect” error is shown.
@@ -368,6 +394,7 @@ An attacker watching over your shoulder sees exactly what they’d see with any 
 Because the real password still works, you can unlock the container afterward to confirm the damage. The built-in **integrity scanner** will detect that files cannot be decrypted and can clean up the broken entries.
 
 <a id="duress-technical-details"></a>
+
 ### Technical details
 
 -   The duress hash is stored in IndexedDB as `SHA-256(random_32‑byte_salt ‖ password)` — never exported to `.safenova` files
@@ -379,46 +406,91 @@ Because the real password still works, you can unlock the container afterward to
 ---
 
 <a id="safenova-proactive"></a>
+
 ## 🛡️ SafeNova Proactive
 
-SafeNova Proactive is a self-contained runtime protection module (`daemon.js`) that loads in `<head>` **before every other application script**. The application refuses to start if the guard is absent or failed to initialize.
+SafeNova Proactive is a self-contained **anti-tamper runtime integrity guard** (`daemon.js`) that loads in `<head>` **before every other application script**. Its threat model is Self-XSS and malicious browser extensions (MV2 `document_start` content scripts, cosmetic-filter injections): both classes of attack require modifying the JavaScript runtime environment in a way that can be detected by capturing native references before any attacker code runs. The application refuses to start if the guard is absent or failed to initialize.
+
+> **Silent by design.** Proactive runs entirely in the background with zero user-visible presence during normal operation. No indicators, no UI overlays, no interaction required — just quiet, constant verification of the cryptographic runtime underneath the application. Think of it as an immune system rather than antivirus: always active, completely invisible, and only surfaces when something genuinely suspicious is detected. The application loads and responds exactly as if Proactive were not there — because when everything checks out, it truly isn’t.
 
 <a id="proactive-startup-sequence"></a>
+
 ### Startup sequence
 
-1. Capture references to all security-critical native functions at the earliest possible moment — before any extension or injected code can tamper with them
-2. Install protective hooks on outbound network APIs (`fetch`, `XMLHttpRequest.prototype.open`, `navigator.sendBeacon`)
-3. Expose the `window.__snvGuard` token; `main.js` checks it before calling `App.init()`
-4. Start a 1-second watchdog interval
+1. **Pre-existence check** — before building `_N`, daemon.js checks if `window.__snvGuard` already exists on the window. If it does, an attacker pre-defined it (e.g. via MV2 `document_start`) to keep `active: true` while blocking the real guard. This taints the boot and causes `__snvVerify()` to return `false`
+2. **Bootstrap validation** — `Function.prototype.toString` and `Function.prototype.call` are structurally validated (`.name`, `.length`, `String()` coercion path) before `_N` is built. Either failing taints the boot
+3. **Capture** references to all security-critical native functions at the earliest possible moment — before any extension or injected code can tamper with them. This includes crypto, storage, encoding, typed arrays, Blob/URL, compression APIs, all timer functions, and `Function.prototype.call/.apply` (for meta-method hardening)
+4. **Pre-capture validation** — every captured reference is verified as truly native using the captured `Function.prototype.toString`. If _any_ capture is already non-native the guard is tainted and the app refuses to boot
+5. Install protective hooks on outbound network APIs (`fetch`, `XMLHttpRequest.prototype.open`, `navigator.sendBeacon`) and `WebSocket`
+6. Expose three non-configurable window properties:
+    - `window.__snvGuard` — `{ active, version: 4, _c: <canary> }` — frozen boot-status token
+    - `window.__snvVerify()` — closure-private canary cross-check; `main.js` calls this instead of reading `active` alone
+    - `window.__snvEmergencyLock()` — direct `localStorage`/`sessionStorage` wipe + in-memory app state clear, bypasses the event system
+7. Start the watchdog — **three independent timer mechanisms** running in parallel
 
 <a id="proactive-watchdog"></a>
-### Real-time watchdog (every 1 s)
 
-Each tick performs two independent checks:
+### Real-time watchdog
 
-**Hook integrity** — verifies by reference equality that the installed hooks are still the exact functions placed by the guard. If any hook was removed or swapped by a third party (extensions like Adblock routinely wrap network APIs), the guard **silently re-installs** them without firing an alert — this is expected browser extension behaviour, not a security threat.
+Each tick performs **five independent checks**:
+
+**Hook integrity** — verifies by reference equality that the installed network hooks are still the exact functions placed by the guard. If any hook was removed or swapped by a third party (extensions like Adblock routinely wrap network APIs), the guard **silently re-installs** them without firing an alert — this is expected browser extension behaviour, not a security threat.
 
 **Native function purity** — verifies that the following functions are still fully native using the captured `Function.prototype.toString` reference (immune to meta-spoofing). Any substitution fires an alert:
 
-| Function                                                               | Purpose                      |
-| ---------------------------------------------------------------------- | ---------------------------- |
-| `crypto.getRandomValues`                                               | IV / key generation          |
-| `crypto.subtle.{encrypt,decrypt,importKey,exportKey,deriveKey,digest}` | All cryptographic operations |
-| `IDBFactory.prototype.open`                                            | IndexedDB access             |
-| `Storage.prototype.{getItem,setItem,removeItem}`                       | Session key storage          |
-| `btoa` / `atob`                                                        | Base-64 encode/decode        |
-| `TextEncoder.prototype.encode`                                         | Text serialization           |
+| Function                                                               | Purpose                              |
+| ---------------------------------------------------------------------- | ------------------------------------ |
+| `crypto.getRandomValues`                                               | IV / key generation                  |
+| `crypto.subtle.{encrypt,decrypt,importKey,exportKey,deriveKey,digest}` | All cryptographic operations         |
+| `IDBFactory.prototype.open`                                            | IndexedDB access                     |
+| `Storage.prototype.{getItem,setItem,removeItem}`                       | Session key storage                  |
+| `btoa` / `atob`                                                        | Base-64 encode/decode                |
+| `TextEncoder.prototype.encode` / `TextDecoder.prototype.decode`        | Text serialization / deserialization |
+| `Uint8Array`, `.prototype.{set,subarray,slice}`                        | Typed array integrity                |
+| `ArrayBuffer`, `.prototype.slice`                                      | Binary buffer integrity              |
+| `DataView`                                                             | Binary data views                    |
+| `Blob`                                                                 | File blob construction               |
+| `URL.createObjectURL` / `URL.revokeObjectURL`                          | Blob URL lifecycle                   |
+| `CompressionStream` / `DecompressionStream` _(if available)_           | Compression pipeline integrity       |
+
+**Dead man's switch heartbeat** — every tick dispatches `CustomEvent('snv:alive', { detail: { n } })` with a **monotonic counter** `n` that increments in the IIFE closure. `main.js` only accepts heartbeat events where `n` is strictly greater than the last seen value; an attacker who fakes `snv:alive` events cannot know the current counter without access to the daemon's private closure. If more than 3 seconds pass without a valid heartbeat, the watchdog has been killed and all open containers are **automatically locked** — derived keys are wiped from memory.
+**App function integrity (G1)** — at window `load`, function references for `Crypto.encrypt`, `Crypto.decrypt`, `Crypto.decryptBin`, `Crypto.deriveKey`, `Crypto.deriveKeyAndRaw`, and `App.lockContainer` are captured into a frozen snapshot. Every tick compares live values against that snapshot by identity (`!==`). A Self-XSS attack that replaces any of these via the DevTools console (e.g. `App.lockContainer = () => {}`) is detected on the very next tick and triggers a full threat response.
+
+**Script-scope shadowing (Crypto)** — the bare `Crypto` identifier resolves to the app’s `const Crypto = (…)()` module (declared in `crypto.js`) via the JS declarative environment record, which is checked _before_ the object environment record where `window.Crypto` (WebCrypto API) lives. The presence of `.encrypt` (app) vs `.subtle` (WebCrypto) is used to confirm the correct object is being checked, eliminating false positives.
+<a id="proactive-watchdog-resilience"></a>
+
+### Watchdog resilience
+
+The watchdog cannot be killed by a single call to `clearInterval` or by replacing a single timer API. Three independent mechanisms run in parallel:
+
+| Mechanism                     | Interval | Kill vector                                                                                                                                       |
+| ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `setInterval`                 | 1 000 ms | `clearInterval` with the correct ID                                                                                                               |
+| Recursive `setTimeout`        | 937 ms   | `clearTimeout` with the correct ID                                                                                                                |
+| `requestAnimationFrame` chain | ~980 ms  | `cancelAnimationFrame` — **guarded: the rAF chain ID is tracked and any call to `cancelAnimationFrame` with that exact ID is silently swallowed** |
+
+All timer functions are captured at startup (`_N._setInterval`, `_N._setTimeout`, `_N._requestAnimationFrame`) so even if `window.setInterval` is later replaced, the watchdog timers were already started with the native versions.
+
+**Timer ID protection** — `window.clearInterval`, `window.clearTimeout`, and `window.cancelAnimationFrame` are replaced with guarded versions that silently ignore any attempt to cancel or clear watchdog timer, rAF, or active debugger-trap interval IDs. Legitimate application code that calls these functions on its own IDs is unaffected.
+
+**Visibility-change fast check** — when the tab transitions from background to visible, an immediate full tick runs so an attacker cannot exploit the ~1 s inter-tick window while the tab was hidden.
 
 <a id="proactive-excluded-checks"></a>
+
 ### Intentionally excluded from checks
 
-| API                           | Reason                                                                                                                                                         |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `console` namespace           | Overrides are common and benign (DevTools, logging libraries)                                                                                                  |
-| `Function.prototype.toString` | Protected via the captured `_fnToString` reference at init time; live checks cause false positives because extensions (Adblock, Dark Reader) routinely wrap it |
-| `document.createElement`      | Extensions legitimately create elements (including `<script>`) for their content scripts; blocking this causes widespread false positives on every page load   |
+| API                                  | Reason                                                                                                                                                                                                                                                                                     |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `console` namespace                  | Overrides are common and benign (DevTools, logging libraries)                                                                                                                                                                                                                              |
+| `Function.prototype.toString`        | Bootstrap-validated at init time (`.name`, `.length`, `String()` coercion path); `_fnToString` and `Function.prototype.call` are captured into `_N` for use by `_isNative`. Live periodic checks cause false positives because extensions (Adblock, Dark Reader) routinely wrap `toString` |
+| `document.createElement`             | Extensions legitimately create elements (including `<script>`) for their content scripts; blocking this causes widespread false positives on every page load                                                                                                                               |
+| `JSON.stringify` / `JSON.parse`      | DevTools, debugger extensions, and frameworks actively patch these                                                                                                                                                                                                                         |
+| `Promise` / `Promise.prototype.then` | Polyfills and extensions wrap these regularly                                                                                                                                                                                                                                              |
+| `performance.now`                    | Privacy extensions (Brave, uBlock) intentionally add timing jitter                                                                                                                                                                                                                         |
+| `Object.defineProperty`              | Too many legitimate uses across extensions and frameworks                                                                                                                                                                                                                                  |
 
 <a id="proactive-network-interception"></a>
+
 ### Network request interception
 
 Every outbound request is validated against `window.location.origin` before it is allowed to proceed:
@@ -426,27 +498,35 @@ Every outbound request is validated against `window.location.origin` before it i
 -   **`fetch`** — blocked and rejected with an error
 -   **`XMLHttpRequest.prototype.open`** — blocked and throws synchronously
 -   **`navigator.sendBeacon`** — blocked and returns `false`
+-   **`WebSocket`** — connections to any host other than `window.location.hostname` are blocked and trigger a threat alert; same-origin WebSocket connections (if ever legitimately needed) are forwarded transparently
 
 SafeNova makes no legitimate external network requests; any attempt is by definition suspicious.
 
 <a id="proactive-threat-response"></a>
+
 ### Threat response
 
-When a native function purity check fails or an external network request is intercepted:
+When a native function purity check, App function integrity check, or network request interception fires:
 
 1. **Immediately wipe** all `snv-*` keys from both `localStorage` and `sessionStorage` using the captured native `Storage.prototype` references (bypasses any hook that may have been placed on the Storage API by the attacker)
-2. Show a **security alert overlay** identifying the blocked operation and advising the user to audit browser extensions, with a reload button
+2. **Directly zero in-memory app state** — `App.key`, `App.container`, `App.clipboard`, and `App.thumbCache` are nullified directly from the daemon's `_wipeAppState()` function, bypassing the event system. This works even if `App.lockContainer` was patched — and the patch itself is detected by the G1 integrity check, triggering this response in the first place
+3. Dispatch `snv:lock` event → the application also locks all open containers via the normal code path, clearing derived keys from memory
+4. **Console threat log (G2)** — a styled `console.error` with a red background is emitted, providing a forensic trace. The `console.error` reference is captured at startup so replacing it after load cannot suppress the output
+5. **Debugger trap (G3)** — a `debugger` statement fires every 50 ms for up to 5 minutes. If the attacker has DevTools open, the JS engine pauses at each breakpoint, blocking further console commands. The trap interval ID is guarded by `window.clearInterval` so it cannot be cancelled. When DevTools are closed this is a native no-op with zero performance cost
+6. Show a **security alert overlay** identifying the blocked operation and advising the user to audit browser extensions, with a reload button. The overlay uses a **closed Shadow DOM** so its contents cannot be queried or mutated from `document` scope; a self-healing `MutationObserver` re-appends the overlay if an attacker removes it from the DOM (active for 3 minutes)
 
 Alerts are rate-limited to one per 10 seconds to prevent alert spam while still reporting every distinct threat.
 
 ---
 
 <a id="container-integrity-scanner"></a>
+
 ## 🛡️ Container Integrity Scanner
 
 The built-in scanner performs a deep analysis of the virtual disk image, encrypted file table, folder hierarchy, desktop layout, and workspace environment. It runs **28 checks** in two phases:
 
 <a id="scanner-phase-1"></a>
+
 ### Phase 1 — VFS structural checks (21 steps, synchronous)
 
 | #   | Check                        | Repairs                                                                        |
@@ -474,6 +554,7 @@ The built-in scanner performs a deep analysis of the virtual disk image, encrypt
 | 21  | Node count summary           | Informational — file/folder/position counts                                    |
 
 <a id="scanner-phase-2"></a>
+
 ### Phase 2 — Database-level checks (7 steps, async)
 
 | #   | Check                        | Repairs                                                                                                             |
@@ -501,11 +582,13 @@ After Deep Clean, a verification scan runs automatically. A backup is offered be
 ---
 
 <a id="performance"></a>
+
 ## ⚡ Performance
 
 SafeNova schedules AES-GCM operations to run with maximum concurrency, taking full advantage of hardware AES acceleration exposed by the browser’s Web Crypto API.
 
 <a id="adaptive-concurrency"></a>
+
 ### Adaptive concurrency
 
 The degree of parallelism is computed once at startup:
@@ -517,26 +600,31 @@ const _CRYPTO_CONCURRENCY = Math.min(8, navigator.hardwareConcurrency || 4);
 This serves as the default batch width for all bulk encrypt/decrypt loops. On an 8-core machine, up to 8 files are processed simultaneously.
 
 <a id="bulk-upload"></a>
+
 ### Bulk upload
 
 For each batch of files the application reads all `ArrayBuffer` payloads in parallel, encrypts the batch in parallel, then writes every encrypted record to IndexedDB in a **single transaction**, eliminating the per-file transaction overhead that would otherwise dominate for large numbers of small files. Files with encrypted blobs exceeding **50 MB** are stored as split 50 MB chunks across the `chunks` object store, avoiding the browser's ~2 GB structured-clone limit on IndexedDB reads; the chunking is fully transparent to all read paths.
 
 <a id="zip-export"></a>
+
 ### ZIP export
 
 Exporting files as an archive uses `DB.getFilesByIds()` — a single IndexedDB read transaction that fetches all required records concurrently via parallel `IDBObjectStore.get()` calls. Decryption of all records is then dispatched in one `Promise.allSettled` call rather than being serialised through fixed-size batches.
 
 <a id="password-change"></a>
+
 ### Password change
 
 Re-encrypting a container under a new key dispatches all `decrypt → encrypt` pairs for every file **fully in parallel**. Results are accumulated and written back in a single `saveFiles()` batch, reducing total elapsed time from `O(n × sequential awaits)` to approximately one parallel round-trip plus one database write.
 
 <a id="container-export"></a>
+
 ### Container export
 
 Exporting a `.safenova` file requires no single contiguous memory allocation regardless of container size. The builder receives each file blob as an individual `Uint8Array` chunk (no concatenation into a giant `workspaceBin`), computes CRC32 incrementally over the chunk list via `_crc32multi()`, and emits an **array of small output parts**. `downloadBuf()` passes that parts array directly to the `Blob` constructor — the browser stitches the pieces together internally without requiring a duplicate allocation. The peak RAM footprint for an N-gigabyte export is approximately N bytes (the data already held in IndexedDB), rather than the previous ~3× N that caused `Array buffer allocation failed` errors for 3 GB+ containers.
 
 <a id="drag-drop-performance"></a>
+
 ### Drag-and-drop performance (large folders)
 
 Icon dragging in folders with many files previously re-iterated all `VFS.children()` results on **every** `mousemove` / `touchmove` frame (~60 fps) to rebuild the occupied-cell map. With hundreds of files this became a measurable bottleneck. The hot path is now O(1) per frame:
@@ -549,31 +637,37 @@ Icon dragging in folders with many files previously re-iterated all `VFS.childre
 ---
 
 <a id="mobile-touch-support"></a>
+
 ## 📱 Mobile Touch Support
 
 SafeNova is fully usable on touchscreen devices (Android Chrome, iOS Safari). All gesture interactions work on real hardware, not only in DevTools device emulation.
 
 <a id="mobile-long-press"></a>
+
 ### Long-press to drag
 
 Holding a finger on an icon for **400 ms** activates drag mode (haptic feedback where the OS supports it). The `touchstart` handler is registered as `{ passive: false }` on the icon area and immediately calls `e.preventDefault()` when the touch lands on an icon. This suppresses the native Android long-press gesture (which would otherwise fire `touchcancel` + `contextmenu` at ~500 ms and silently kill the drag). Scrolling on empty area is unaffected — `preventDefault` is only called when a `.file-item` is the touch target, and `.file-item` elements carry `touch-action: none` in CSS to prevent the browser's pan gesture recognizer from competing.
 
 <a id="mobile-multi-file-drag"></a>
+
 ### Multi-file drag
 
 All items in the current selection are dragged simultaneously. Each selected icon follows the same displacement vector as the primary icon. Snap previews are shown for every item in the selection, offset relative to one another to reflect final grid positions.
 
 <a id="mobile-context-menu"></a>
+
 ### Context menu
 
 A short tap (< 350 ms) on an icon opens the context menu. A long press (≥ 400 ms) starts a drag instead of opening the menu. The two actions are mutually exclusive — if the native `contextmenu` event fires while a drag is already active, it is suppressed; if it fires before the drag timer completes, the timer is cancelled.
 
 <a id="mobile-paste-at-finger-position"></a>
+
 ### Paste at finger position
 
 When **Paste** is triggered from the context menu on a touch device, the items are placed at the position where the menu was opened, rather than defaulting to the origin. The context screen position (`App._ctxScreenPos`) is captured when the menu action is confirmed, and each pasted item is placed via `_snapFreeCell` relative to that position.
 
 <a id="mobile-overscroll"></a>
+
 ### Overscroll
 
 `overscroll-behavior: none` is applied to `.desktop-area` and `.fw-area` to prevent pull-to-refresh and iOS overscroll bounce from interfering with drag gestures.
@@ -581,6 +675,7 @@ When **Paste** is triggered from the context menu on a touch device, the items a
 ---
 
 <a id="community"></a>
+
 ## 💬 Community
 
 Have questions, ideas, or just want to chat? Here's where to find us:
@@ -590,6 +685,7 @@ Have questions, ideas, or just want to chat? Here's where to find us:
 ---
 
 <a id="thanks"></a>
+
 ## 🤝 Thanks to all contributors
 
 <a href="https://github.com/DosX-dev/SafeNova/graphs/contributors">
