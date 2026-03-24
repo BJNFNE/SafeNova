@@ -1,4 +1,4 @@
-![](./pics/intro.png)
+<img src="./pics/intro.png" style="display: block; margin: 0 auto; max-width:80%; max-height:80%; border-radius:8px; margin-bottom:16px">
 
 > ### Try it online: [https://safenova.dosx.su/](https://safenova.dosx.su/)
 
