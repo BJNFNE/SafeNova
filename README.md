@@ -490,3 +490,5 @@ Have questions, ideas, or just want to chat? Here's where to find us:
 <a href="https://github.com/DosX-dev/SafeNova/graphs/contributors">
 <img src="https://readme-contribs.as93.net/contributors/DosX-dev/SafeNova?textColor=737373&perRow=9&shape=squircle&isResponsive=true" />
 </a>
+
+> Design development and security audit were carried out with the help of and thanks to the **Claude Opus 4.6 Agent** model.
