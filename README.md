@@ -802,8 +802,14 @@ Have questions, ideas, or just want to chat? Here's where to find us:
 
 ## 🤝 Thanks to all contributors
 
+I (**[DosX](https://github.com/DosX-dev)**) envision **SafeNova** as what it is: a complex engineering product — something created to solve a real problem, not just to sit on a shelf. Nevertheless, I would like to point out that the level of quality and safety achieved in this project is not a purely individual achievement. The architecture, the threat model, the complex cases that I would never have thought to talk about on my own — all this was created with the help of people who really helped, asked difficult questions and identified what I had missed. Great credit goes to everyone who left a review, suggestion, or error message along the way. If you want to contribute, check out the [contribution section](https://github.com/DosX-dev/SafeNova?tab=contributing-ov-file).
+
 <a href="https://github.com/DosX-dev/SafeNova/graphs/contributors">
 <img src="https://readme-contribs.as93.net/contributors/DosX-dev/SafeNova?textColor=737373&perRow=9&shape=squircle&isResponsive=true" />
 </a>
 
-> Design development and security audit were carried out with the help of and thanks to the **Claude Opus 4.6 Agent** model.
+> The following tools were used during development:
+>
+> -   **[Visual Studio Code](https://code.visualstudio.com/)** — writing code in it and formatting
+> -   **[Detect It Easy](https://github.com/horsicq/Detect-It-Easy)** — analyzing the ZIP format and structure in practice
+> -   **[Claude Opus Agent (v4.6)](https://www.claude.ai/)** — help with developing the interface part, checking the code and writing local tests
