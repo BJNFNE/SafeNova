@@ -52,7 +52,9 @@ Key properties:
     -   [Watchdog resilience](#proactive-watchdog-resilience)
     -   [Intentionally excluded from checks](#proactive-excluded-checks)
     -   [Network request interception](#proactive-network-interception)
+    -   [DOM exfiltration defense](#proactive-dom-exfiltration)
     -   [Threat response](#proactive-threat-response)
+    -   [Design philosophy](#proactive-design-philosophy)
 -   [🔍 Container Integrity Scanner](#container-integrity-scanner)
     -   [Phase 1 — VFS structural checks](#scanner-phase-1)
     -   [Phase 2 — Database-level checks](#scanner-phase-2)
@@ -128,7 +130,7 @@ No external installs needed — it uses the Windows built-in `HttpListener`.
 -   **Sort & arrange** — sort icons by name, date, size, or type; drag to custom positions
 -   **Secure container deletion** — before permanent erasure, every encrypted blob is cryptographically pre-shredded: inline files have 2 random non-adjacent bytes XOR-flipped with a random value (position and delta are unknown and unlogged); chunked large files have their AES-GCM IV zeroed in the file record without touching the chunk data, making decryption unconditionally impossible and the operation maximally fast
 -   **Duress password** — optional panic password that, when entered anywhere (unlock, change password, export), looks exactly like an incorrect password but silently destroys all encrypted data in the background; see [Duress Password](#duress-password) below
--   **SafeNova Proactive** — runtime protection module that loads first in `<head>`, captures all security-critical native function references at startup (crypto, storage, encoding, typed arrays, Blob/URL, compression, timers), validates every capture is truly native (pre-capture tampering guard), hooks outbound network APIs to block external requests, and runs a triple-redundant watchdog (`setInterval` + recursive `setTimeout` + `requestAnimationFrame` chain) with timer-ID protection and a dead man's switch heartbeat — if the watchdog is killed, the app auto-locks all containers
+-   **SafeNova Proactive** — runtime protection module that loads first in `<head>`, captures all security-critical native function references at startup (crypto, storage, encoding, typed arrays, Blob/URL, compression, timers), validates every capture is truly native (pre-capture tampering guard), hooks outbound network APIs (`fetch`, `XHR.open`, `sendBeacon`, `WebSocket`, `window.open`, `EventSource`, `Worker`/`SharedWorker`) and DOM exfiltration vectors (`setAttribute`, `innerHTML`/`outerHTML`, `insertAdjacentHTML`, `document.write`, `Location` navigation, form submit, resource property setters) to block external requests, silently removes dynamically injected external scripts via MutationObserver, blocks `eval` and `new Function()` constructors, guards `setTimeout`/`setInterval` string callbacks, and runs a quadruple-redundant watchdog (`setInterval` + recursive `setTimeout` + `requestAnimationFrame` chain + `MessageChannel`) with timer-ID protection and a dead man's switch heartbeat — if the watchdog is killed, the app auto-locks all containers
 -   **Container integrity scanner** — 28 automated checks (21 VFS structural + 7 database-level) with one-click auto-repair, **Deep Clean** (flattens over-nested folder trees, repairs all metadata), and a backup prompt before any destructive operation; includes file decryption verification that detects corrupted or unreadable blobs (including those silently destroyed by the duress trigger)
 -   **Settings** — three tabs: personalization, statistics, activity logs
 -   **Keyboard shortcuts** — `Delete`, `F2`, `Ctrl+A`, `Ctrl+C/X/V`, `Ctrl+S` (save in editor), `Escape`, `End` (lock container — only when focus is not in a text field)
@@ -495,15 +497,15 @@ Watchdog timer IDs are stored in a plain `{}` object (not a `Set`) and tested wi
 
 ### Intentionally excluded from checks
 
-| API                                  | Reason                                                                                                                                                                                                                                                                                                    |
-| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `console` namespace                  | Overrides are common and benign (DevTools, logging libraries)                                                                                                                                                                                                                                             |
-| `Function.prototype.toString`        | Bootstrap-validated at init time (`.name`, `.length`, `'' + fn` coercion — no `String()` call); `_fnToString` and `Function.prototype.call` are captured into `_N` for use by `_isNative`. Live periodic checks cause false positives because extensions (Adblock, Dark Reader) routinely wrap `toString` |
-| `document.createElement`             | Extensions legitimately create elements (including `<script>`) for their content scripts; blocking this causes widespread false positives on every page load                                                                                                                                              |
-| `JSON.stringify` / `JSON.parse`      | DevTools, debugger extensions, and frameworks actively patch these                                                                                                                                                                                                                                        |
-| `Promise` / `Promise.prototype.then` | Polyfills and extensions wrap these regularly                                                                                                                                                                                                                                                             |
-| `performance.now`                    | Privacy extensions (Brave, uBlock) intentionally add timing jitter                                                                                                                                                                                                                                        |
-| `Object.defineProperty`              | Too many legitimate uses across extensions and frameworks                                                                                                                                                                                                                                                 |
+| API                                  | Reason                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `console` namespace                  | Overrides are common and benign (DevTools, logging libraries)                                                                                                                                                                                                                                                                                                           |
+| `Function.prototype.toString`        | Bootstrap-validated at init time (`.name`, `.length`, `'' + fn` coercion — no `String()` call); `_fnToString` and `Function.prototype.call` are captured into `_N` for use by `_isNative`. Live periodic checks cause false positives because extensions (Adblock, Dark Reader) routinely wrap `toString`                                                               |
+| `document.createElement`             | Extensions legitimately create elements (including `<script>`) for their content scripts; blocking this causes widespread false positives. **Exception:** `<script>` elements with an external `src=` injected dynamically after page load **are** silently removed from the DOM and logged to the console by the MutationObserver layer — no full modal alert is shown |
+| `JSON.stringify` / `JSON.parse`      | DevTools, debugger extensions, and frameworks actively patch these                                                                                                                                                                                                                                                                                                      |
+| `Promise` / `Promise.prototype.then` | Polyfills and extensions wrap these regularly                                                                                                                                                                                                                                                                                                                           |
+| `performance.now`                    | Privacy extensions (Brave, uBlock) intentionally add timing jitter                                                                                                                                                                                                                                                                                                      |
+| `Object.defineProperty`              | Too many legitimate uses across extensions and frameworks                                                                                                                                                                                                                                                                                                               |
 
 <a id="proactive-network-interception"></a>
 
@@ -515,8 +517,39 @@ Every outbound request is validated against `window.location.origin` before it i
 -   **`XMLHttpRequest.prototype.open`** — blocked and throws synchronously
 -   **`navigator.sendBeacon`** — blocked and returns `false`
 -   **`WebSocket`** — connections to any **host:port** combination other than `window.location.host` are blocked and trigger a threat alert. The origin check uses the captured `_N.URL` constructor (not the live `window.URL`) to resist a runtime replacement of the URL global. A hostname-only check (old: `location.hostname`) would have allowed `wss://localhost:9999` while the page is on `localhost:8080`, enabling exfiltration to another local service; same-origin WebSocket connections (if ever legitimately needed) are forwarded transparently
+-   **`window.open`** — external URLs blocked; same-origin popups forwarded normally
+-   **`EventSource`** — external URLs blocked at construction; an `EventSource` to an external host would establish a persistent covert SSE channel for data exfiltration
+-   **`Worker` / `SharedWorker`** — `data:` blob workers and external-URL workers are blocked; `blob:` workers with external embedded URLs are also rejected. Rogue workers could bypass all same-page hooks and exfiltrate data independently
+-   **`setTimeout` / `setInterval` string callbacks (E14)** — string-form callbacks (e.g. `setTimeout("eval(code)", 0)`) are stripped to a no-op. Function-form callbacks are forwarded normally
+-   **`eval` (E15)** — replaced with a non-configurable property that throws synchronously; cannot be restored via `Object.defineProperty` after the guard runs
+-   **`new Function()` (E16)** — the `Function` constructor is proxied; any call via `new Function(...)` or `Function(...)` throws synchronously
 
 SafeNova makes no legitimate external network requests; any attempt is by definition suspicious.
+
+<a id="proactive-dom-exfiltration"></a>
+
+### DOM exfiltration defense (D2)
+
+A second protection layer covers DOM-level exfiltration vectors — APIs that can inject external resources or redirect the page without going through the network layer directly.
+
+| API                                      | Behaviour                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Element.setAttribute`                   | External URLs in resource attributes (`src`, `href`, `data`, `ping`, `action`, `formaction`, `srcset`, `poster`) are blocked and trigger a full alert. Inline `on*` event handler attributes are stripped. Navigation elements (`<a>`, `<area>`) are exempt from the `href` check — those are user-activated navigation, not resource loaders; `ping=` remains blocked                                         |
+| `Element.innerHTML` / `outerHTML` setter | HTML strings are scanned for external resource URLs and `on*` attribute patterns before assignment; blocked if a threat is found                                                                                                                                                                                                                                                                               |
+| `Element.insertAdjacentHTML`             | Same scan as `innerHTML`                                                                                                                                                                                                                                                                                                                                                                                       |
+| `document.write` / `document.writeln`    | Same scan; blocked before the string is written to the document                                                                                                                                                                                                                                                                                                                                                |
+| `Location.assign` / `Location.replace`   | External URLs blocked; same-origin navigation forwarded normally                                                                                                                                                                                                                                                                                                                                               |
+| `Location.href` setter                   | Same as `assign` / `replace`                                                                                                                                                                                                                                                                                                                                                                                   |
+| `HTMLFormElement.submit`                 | External `action=` URLs blocked                                                                                                                                                                                                                                                                                                                                                                                |
+| Resource property setters                | `HTMLImageElement.src`, `HTMLScriptElement.src`, `HTMLIFrameElement.src`, `HTMLVideoElement.src`, `HTMLAudioElement.src`, `HTMLEmbedElement.src`, `HTMLObjectElement.data`, `HTMLLinkElement.href` — external URL assignments are blocked. For `<script>.src` specifically the block is **silent**: the element is not loaded, a console trace is written, but no modal alert is shown (reduces alert fatigue) |
+
+**MutationObserver defense-in-depth (section 8b)** — a `MutationObserver` watches the entire `document.documentElement` subtree and catches attacks that bypass the property/method hooks above:
+
+-   **Added elements** — newly appended nodes are scanned for external resource attributes or `on*` handlers; threatening attributes are removed and a full alert fires
+-   **Dynamically injected `<script src="https://...">` elements** — silently removed from the DOM; a `console.error` trace is written via the captured `_N.consoleError` reference (which cannot be suppressed by replacing `console.error` after load). Same-origin, relative-path, and inline `<script>` elements are left untouched
+-   **Attribute mutations** — attribute changes on existing elements that add an external resource URL or an `on*` handler are caught and reversed; `href` changes on `<a>` and `<area>` elements are excluded (navigation-only)
+
+---
 
 <a id="proactive-threat-response"></a>
 
@@ -533,6 +566,28 @@ When a native function purity check, App function integrity check, or network re
 7. Show a **security alert overlay** identifying the blocked operation and advising the user to audit browser extensions, with a reload button. The overlay uses a **closed Shadow DOM** so its contents cannot be queried or mutated from `document` scope; a self-healing `MutationObserver` re-appends the overlay if an attacker removes it from the DOM (active for 3 minutes). The `reason` string shown inside the overlay is HTML-escaped with a bare `for` loop and character equality checks — no `String.prototype.replace` calls — so replacing that method cannot inject markup into the Shadow DOM
 
 Alerts are rate-limited to one per 10 seconds to prevent alert spam while still reporting every distinct threat.
+
+---
+
+<a id="proactive-design-philosophy"></a>
+
+### Design philosophy
+
+SafeNova Proactive is built around one central principle: **protect as many JS primitives and APIs as possible, while using them as little as possible itself.**
+
+All security-critical references are captured once at the very top of the IIFE into the frozen `_N` object — a snapshot of the JS runtime taken before any extension or injected script can interfere. From that point on, the daemon never calls live globals. Every internal operation that needs a JS built-in goes through `_N`:
+
+| Instead of...                      | Proactive uses...        | Why                                                  |
+| ---------------------------------- | ------------------------ | ---------------------------------------------------- |
+| `window.fetch`                     | `_N.fetch`               | Immune to post-load `window.fetch = ...` replacement |
+| `Array.prototype.push`             | `arr[arr.length] = x`    | Index assignment cannot be hooked                    |
+| `for...of`                         | Indexed `for` loops      | Immune to `Symbol.iterator` poisoning                |
+| `new Set()` / `Set.prototype.has`  | `key in plainObject`     | `in` is a language operator, unhookable              |
+| `String.prototype.match` / `.exec` | Manual `indexOf` loops   | Avoids hookable regex prototype methods              |
+| `String(x)`                        | `'' + x`                 | Concatenation operator, not a function call          |
+| `Array.prototype.slice`            | Captured `_strSlice` ref | Survives `Array.prototype.slice` replacement         |
+
+As a direct result, the integrity-checking core is **well-isolated and resistant to most hook-based attacks**: replacing `window.fetch`, `Array.prototype.push`, or any other live global after page load cannot change daemon behaviour — the daemon has already captured what it needs, validates those captures on every watchdog tick, and would detect the replacement before an attacker could leverage it.
 
 ---
 
