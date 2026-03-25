@@ -810,7 +810,7 @@
         try {
             const _ce = _N.consoleError || console.error.bind(console);
             _ce(
-                '%c⛔️  SafeNova Proactive  │  THREAT DETECTED',
+                '%c\u26d4\ufe0f  SafeNova Proactive  \u2502  THREAT DETECTED',
                 'background:#6a0000;color:#ff5555;font-size:13px;font-weight:700;padding:3px 8px;border-radius:3px'
             );
             _ce('%c' + ('' + reason),
@@ -1068,6 +1068,18 @@
         return _N.formSubmit.apply(this, arguments);
     };
 
+    // Shared console output for silently-blocked operations (no modal alert, no key-wipe).
+    // Uses captured _N.consoleError — immune to post-load console.error replacement.
+    function _logBlockedToConsole(msg) {
+        try {
+            const _ce = _N.consoleError || console.error.bind(console);
+            _ce('%c\u26d4\ufe0f  SafeNova Proactive  \u2502  BLOCKED',
+                'background:#6a0000;color:#ff5555;font-size:13px;font-weight:700;padding:3px 8px;border-radius:3px');
+            _ce('%c' + ('' + msg),
+                'color:#ff4444;font-weight:600;font-size:12px;padding-left:4px');
+        } catch { }
+    }
+
     // Resource property (.src/.href/.data) hook helper.
     // Caches the setter in _H[hKey] so re-hooks reuse the same closure.
     // noAlert — if truthy, log to console only (no modal/key-wipe). Used for
@@ -1080,13 +1092,7 @@
             _H[hKey] = noAlert
                 ? function (val) {
                     if (_isExternal('' + (val ?? ''))) {
-                        try {
-                            const _ce = _N.consoleError || console.error.bind(console);
-                            _ce('%c\u26d4\ufe0f  SafeNova Proactive  \u2502  SCRIPT BLOCKED',
-                                'background:#6a0000;color:#ff5555;font-size:13px;font-weight:700;padding:3px 8px;border-radius:3px');
-                            _ce('%c' + label + ' silently blocked \u2192 ' + val,
-                                'color:#ff4444;font-weight:600;font-size:12px;padding-left:4px');
-                        } catch { }
+                        _logBlockedToConsole(label + ' blocked \u2192 ' + val);
                         return;
                     }
                     _reflectApply(origDesc.set, this, [val]);
@@ -1117,13 +1123,7 @@
             try { _scriptSrc = '' + (_reflectApply(_N.getAttribute, el, ['src']) || ''); } catch { }
             if (_scriptSrc && _isExternal(_scriptSrc)) {
                 try { if (el.parentNode) el.parentNode.removeChild(el); } catch { }
-                try {
-                    const _ce = _N.consoleError || console.error.bind(console);
-                    _ce('%c\u26d4\ufe0f  SafeNova Proactive  \u2502  SCRIPT BLOCKED',
-                        'background:#6a0000;color:#ff5555;font-size:13px;font-weight:700;padding:3px 8px;border-radius:3px');
-                    _ce('%cInjected external <script> removed from DOM \u2192 src=' + _scriptSrc,
-                        'color:#ff4444;font-weight:600;font-size:12px;padding-left:4px');
-                } catch { }
+                _logBlockedToConsole('Injected external <script> removed from DOM \u2192 src=' + _scriptSrc);
             }
             return; // never fall through to the general attribute scan for script elements
         }
