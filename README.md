@@ -153,12 +153,14 @@ SafeNova/
 │   └── app.css         # All application styles
 │
 └── js/
-    ├── argon2.umd.min.js  # Argon2id WASM/JS implementation (hashwasm)
+    ├── proactive/
+    │   └── daemon.js          # SafeNova Proactive — anti-tamper runtime integrity guard (loads first of all, in <head>)
+    ├── libs/
+    │   └── argon2.umd.min.js  # Argon2id WASM/JS implementation (hashwasm)
     ├── docmode.js         # Pre-CSS docmode guard (runs before stylesheet loads)
-    ├── daemon.js          # SafeNova Proactive — runtime protection module (loads first of all)
     ├── initlog.js         # Initialization stage console logger (InitLog)
     ├── constants.js       # Shared constants (DB names, limits, chunk size), utilities, icon SVGs, duress hash helpers
-    ├── db.js              # IndexedDB abstraction — SafeNovaEFS (containers / files / vfs / chunks stores);
+    ├── db.js              # IndexedDB abstraction — SafeNovaEFS (containers / files / vfs / chunks stores)
     ├── crypto.js          # AES-256-GCM + Argon2id encryption layer
     ├── vfs.js             # In-memory virtual filesystem (nodes, positions, child index)
     ├── state.js           # App state singleton — key, session encrypt/decrypt, three-source wrap key
@@ -331,7 +333,7 @@ An attacker with live access to the running browser process (e.g. malicious exte
 | `style-src`   | `'self' 'unsafe-inline'`    |
 | `img-src`     | `'self' blob: data:`        |
 | `media-src`   | `blob:`                     |
-| `frame-src`   | `blob:`                     |
+| `frame-src`   | `blob: about:`              |
 | `font-src`    | `'self'`                    |
 | `connect-src` | `'self'`                    |
 | `worker-src`  | `'self' blob:`              |
@@ -339,7 +341,7 @@ An attacker with live access to the running browser process (e.g. malicious exte
 | `form-action` | `'none'`                    |
 | `object-src`  | `'none'`                    |
 
-`'unsafe-inline'` is absent from `script-src`. There are no inline `<script>` blocks — the docmode persistence guard (`docmode.js`) and the SafeNova Proactive runtime protection module (`daemon.js`) are loaded as external files in `<head>` before the stylesheet. All JavaScript is loaded via `'self'`. Argon2id WASM compilation is permitted by `'wasm-unsafe-eval'`.
+`'unsafe-inline'` is absent from `script-src`. There are no inline `<script>` blocks — the docmode persistence guard (`docmode.js`) and the SafeNova Proactive runtime protection module (`js/proactive/daemon.js`) are loaded as external files in `<head>` before the stylesheet. All JavaScript is loaded via `'self'`. Argon2id WASM compilation is permitted by `'wasm-unsafe-eval'`. `about:` is added to `frame-src` to allow SafeNova Proactive to create a temporary hidden `about:blank` iframe at startup for capturing a pristine, extension-untampered console reference (the iframe is removed from the DOM immediately after capture).
 
 <a id="csp-server-headers"></a>
 

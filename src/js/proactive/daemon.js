@@ -210,6 +210,32 @@
         (function () { try { return _reflectApply(_reTest, _nativeRe, ['' + Function.prototype.call]); } catch { return false; } }());
 
     /* ──────────────────────────────────────────────────────────
+       0d. Iframe-sourced console capture
+           MV2 extensions with run_at:document_start can wrap
+           console.error on the main window BEFORE daemon.js runs.
+           An about:blank iframe created programmatically gets a
+           fresh contentWindow with its own untouched console
+           instance — extensions only target the main window, not
+           child frames.  We grab .error, bind it, then immediately
+           remove the iframe from the DOM; the JS reference keeps
+           the context alive without leaving a visible DOM node.
+           Falls back to main-window console.error if CSP blocks
+           frame creation or the DOM is unavailable.
+       ────────────────────────────────────────────────────────── */
+    let _ifrConsoleErr = null;
+    try {
+        const _ifr = document.createElement('iframe');
+        _ifr.style.cssText = 'display:none;width:0;height:0;position:absolute;left:-9999px;top:-9999px';
+        // document.body does not exist when <head> scripts run — use documentElement.
+        document.documentElement.appendChild(_ifr);
+        const _iwin = _ifr.contentWindow;
+        if (_iwin && typeof _iwin.console === 'object' && typeof _iwin.console.error === 'function') {
+            _ifrConsoleErr = _iwin.console.error.bind(_iwin.console);
+        }
+        document.documentElement.removeChild(_ifr);
+    } catch { /* frame-src CSP blocked or DOM unavailable — fall back to direct capture */ }
+
+    /* ──────────────────────────────────────────────────────────
        1.  Lock in native references
        ────────────────────────────────────────────────────────── */
     // BUG-D: Use captured _freeze (not live Object.freeze) so that replacing
@@ -330,9 +356,9 @@
         // a <style> injection (no injectable keyframe name to target via CSS).
         elementAnimate: Element.prototype.animate ?? null,
 
-        // Diagnostics — captured before any attacker replacement so that
-        // _logThreatToConsole output cannot be silenced by console.error = () => {}.
-        consoleError: console.error?.bind(console) ?? null,
+        // Diagnostics — prefer iframe-sourced console.error (immune to main-window
+        // wrapping by MV2 extensions at document_start); fall back to direct capture.
+        consoleError: _ifrConsoleErr ?? (console.error?.bind(console) ?? null),
 
         // DOM exfiltration defense — element methods (D2)
         setAttribute: Element.prototype.setAttribute,
