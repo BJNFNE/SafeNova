@@ -418,16 +418,18 @@ SafeNova Proactive is a self-contained **anti-tamper runtime integrity guard** (
 
 ### Startup sequence
 
-1. **Pre-existence check** — before building `_N`, daemon.js checks if `window.__snvGuard` already exists on the window. If it does, an attacker pre-defined it (e.g. via MV2 `document_start`) to keep `active: true` while blocking the real guard. This taints the boot and causes `__snvVerify()` to return `false`
-2. **Bootstrap validation** — `Function.prototype.toString` and `Function.prototype.call` are structurally validated (`.name`, `.length`, `String()` coercion path) before `_N` is built. Either failing taints the boot
-3. **Capture** references to all security-critical native functions at the earliest possible moment — before any extension or injected code can tamper with them. This includes crypto, storage, encoding, typed arrays, Blob/URL, compression APIs, all timer functions, and `Function.prototype.call/.apply` (for meta-method hardening)
-4. **Pre-capture validation** — every captured reference is verified as truly native using the captured `Function.prototype.toString`. If _any_ capture is already non-native the guard is tainted and the app refuses to boot
-5. Install protective hooks on outbound network APIs (`fetch`, `XMLHttpRequest.prototype.open`, `navigator.sendBeacon`) and `WebSocket`
-6. Expose three non-configurable window properties:
-    - `window.__snvGuard` — `{ active, version: 4, _c: <canary> }` — frozen boot-status token
+1. **Earliest captures** — at the absolute first line of the IIFE, before any other code, five additional security-critical primitives are captured as IIFE-private `const` bindings that cannot be reassigned: `Object.freeze` (used to actually freeze `_N`), `RegExp.prototype.test` (used inside `_isNative` via `Reflect.apply`), `Array.prototype.push` (captured; array appends use `arr[arr.length]=` index assignment to avoid any call), `String.prototype.slice` (used in `_nukeStorage` to check key prefixes), and the hex-char lookup string `_HEX_CHARS = '0123456789abcdef'` (used for canary generation and `_ALERT_HOST_CLS` — no `Number.prototype.toString` calls anywhere). Replacing any of these via a MV2 `document_start` extension is detected by the structural boot check
+2. **Pre-existence check** — before building `_N`, daemon.js checks if `window.__snvGuard` already exists on the window. If it does, an attacker pre-defined it (e.g. via MV2 `document_start`) to keep `active: true` while blocking the real guard. This taints the boot and causes `__snvVerify()` to return `false`
+3. **Bootstrap validation** — `Function.prototype.toString` and `Function.prototype.call` are structurally validated (`.name`, `.length`, and string-coercion via `'' + fn` — no `String()` call) before `_N` is built. All regex tests in bootstrap use `_reflectApply(_reTest, ...)` so a live `RegExp.prototype.test` replacement cannot make the checks return `true` for fakes. Either failing taints the boot
+4. **Structural validation of early captures** — `_reTest`, `_freeze`, `_arrPush`, and `_strSlice` are validated via `.name` structural checks (cannot use `_isNative` — circular). Naive spoofing that forgets to copy the function name is caught here
+5. **Capture** references to all security-critical native functions at the earliest possible moment — before any extension or injected code can tamper with them. `_N` is frozen using the captured `_freeze` reference (not the live `Object.freeze`) so replacing `Object.freeze` cannot leave `_N` mutable
+6. **Pre-capture validation** — every captured reference is verified as truly native using indexed for-loops (not `for...of`, which relies on `Array.prototype[Symbol.iterator]`). If _any_ capture is already non-native the guard is tainted and the app refuses to boot
+7. Install protective hooks on outbound network APIs (`fetch`, `XMLHttpRequest.prototype.open`, `navigator.sendBeacon`) and `WebSocket`
+8. Expose three non-configurable window properties:
+    - `window.__snvGuard` — `{ active, version: 6, _c: <canary> }` — frozen boot-status token
     - `window.__snvVerify()` — closure-private canary cross-check; `main.js` calls this instead of reading `active` alone
     - `window.__snvEmergencyLock()` — direct `localStorage`/`sessionStorage` wipe + in-memory app state clear, bypasses the event system
-7. Start the watchdog — **three independent timer mechanisms** running in parallel
+9. Start the watchdog — **four independent timer mechanisms** running in parallel
 
 <a id="proactive-watchdog"></a>
 
@@ -439,22 +441,32 @@ Each tick performs **five independent checks**:
 
 **Native function purity** — verifies that the following functions are still fully native using the captured `Function.prototype.toString` reference (immune to meta-spoofing). Any substitution fires an alert:
 
-| Function                                                               | Purpose                              |
-| ---------------------------------------------------------------------- | ------------------------------------ |
-| `crypto.getRandomValues`                                               | IV / key generation                  |
-| `crypto.subtle.{encrypt,decrypt,importKey,exportKey,deriveKey,digest}` | All cryptographic operations         |
-| `IDBFactory.prototype.open`                                            | IndexedDB access                     |
-| `Storage.prototype.{getItem,setItem,removeItem}`                       | Session key storage                  |
-| `btoa` / `atob`                                                        | Base-64 encode/decode                |
-| `TextEncoder.prototype.encode` / `TextDecoder.prototype.decode`        | Text serialization / deserialization |
-| `Uint8Array`, `.prototype.{set,subarray,slice}`                        | Typed array integrity                |
-| `ArrayBuffer`, `.prototype.slice`                                      | Binary buffer integrity              |
-| `DataView`                                                             | Binary data views                    |
-| `Blob`                                                                 | File blob construction               |
-| `URL.createObjectURL` / `URL.revokeObjectURL`                          | Blob URL lifecycle                   |
-| `CompressionStream` / `DecompressionStream` _(if available)_           | Compression pipeline integrity       |
+| Function                                                               | Purpose                                                                                   |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `crypto.getRandomValues`                                               | IV / key generation                                                                       |
+| `crypto.subtle.{encrypt,decrypt,importKey,exportKey,deriveKey,digest}` | All cryptographic operations                                                              |
+| `IDBFactory.prototype.open`                                            | IndexedDB access                                                                          |
+| `Storage.prototype.{getItem,setItem,removeItem}`                       | Session key storage                                                                       |
+| `btoa` / `atob`                                                        | Base-64 encode/decode                                                                     |
+| `TextEncoder.prototype.encode` / `TextDecoder.prototype.decode`        | Text serialization / deserialization                                                      |
+| `Uint8Array`, `.prototype.{set,subarray,slice}`                        | Typed array integrity                                                                     |
+| `ArrayBuffer`, `.prototype.slice`                                      | Binary buffer integrity                                                                   |
+| `DataView`                                                             | Binary data views                                                                         |
+| `Blob`                                                                 | File blob construction                                                                    |
+| `URL`                                                                  | URL parsing — captured and checked so a runtime replacement cannot bypass origin checks   |
+| `URL.createObjectURL` / `URL.revokeObjectURL`                          | Blob URL lifecycle                                                                        |
+| `CompressionStream` / `DecompressionStream` _(if available)_           | Compression pipeline integrity                                                            |
+| `Function.prototype.call` / `.apply`                                   | Meta-method hardening                                                                     |
+| `Reflect.apply`                                                        | `_isNative` core — must stay native so fake-function detection cannot be bypassed         |
+| `EventTarget.prototype.addEventListener` / `.dispatchEvent`            | Event subscription and heartbeat                                                          |
+| `XMLHttpRequest.prototype.send`                                        | XHR send hook hardening                                                                   |
+| `RegExp.prototype.test`                                                | `_isNative` regex match — replacing with `()=>true` would make every function look native |
+| `Object.freeze`                                                        | `_N` immutability — replacing with `x=>x` would leave captured refs mutable               |
+| `Array.prototype.push`                                                 | Captured for validation; runtime appends use `arr[arr.length]=` index assignment          |
+| `String.prototype.slice`                                               | Prefix check in `_nukeStorage`                                                            |
+| `Array.prototype[Symbol.iterator]`                                     | Array iteration — poisoning this would silently skip validation and watchdog loops        |
 
-**Dead man's switch heartbeat** — every tick dispatches `CustomEvent('snv:alive', { detail: { n } })` with a **monotonic counter** `n` that increments in the IIFE closure. `main.js` only accepts heartbeat events where `n` is strictly greater than the last seen value; an attacker who fakes `snv:alive` events cannot know the current counter without access to the daemon's private closure. If more than 3 seconds pass without a valid heartbeat, the watchdog has been killed and all open containers are **automatically locked** — derived keys are wiped from memory.
+**Dead man's switch heartbeat** — every tick dispatches `CustomEvent('snv:alive', { detail: { n } })` with a **monotonic counter** `n` that increments in the IIFE closure. `main.js` only accepts heartbeat events where `n > lastN` **and** `n ≤ lastN + 15` (upper-bound injection guard). Without the cap a Self-XSS attacker could dispatch a single event with `n = Number.MAX_SAFE_INTEGER`, permanently advancing the expected counter so all real daemon ticks are rejected — forcing a lock in 3 seconds. The window of 15 covers ≥5 s of genuine timer jitter (three mechanisms at ~1 tick/s). An attacker cannot read `_heartbeatN` from the daemon’s private closure. If more than 3 seconds pass without a valid heartbeat the watchdog has been killed and all open containers are **automatically locked** — derived keys are wiped from memory.
 **App function integrity (G1)** — at window `load`, function references for `Crypto.encrypt`, `Crypto.decrypt`, `Crypto.decryptBin`, `Crypto.deriveKey`, `Crypto.deriveKeyAndRaw`, and `App.lockContainer` are captured into a frozen snapshot. Every tick compares live values against that snapshot by identity (`!==`). A Self-XSS attack that replaces any of these via the DevTools console (e.g. `App.lockContainer = () => {}`) is detected on the very next tick and triggers a full threat response.
 
 **Script-scope shadowing (Crypto)** — the bare `Crypto` identifier resolves to the app’s `const Crypto = (…)()` module (declared in `crypto.js`) via the JS declarative environment record, which is checked _before_ the object environment record where `window.Crypto` (WebCrypto API) lives. The presence of `.encrypt` (app) vs `.subtle` (WebCrypto) is used to confirm the correct object is being checked, eliminating false positives.
@@ -462,17 +474,20 @@ Each tick performs **five independent checks**:
 
 ### Watchdog resilience
 
-The watchdog cannot be killed by a single call to `clearInterval` or by replacing a single timer API. Three independent mechanisms run in parallel:
+The watchdog cannot be killed by a single call to `clearInterval` or by replacing a single timer API. **Four independent mechanisms** run in parallel:
 
 | Mechanism                     | Interval | Kill vector                                                                                                                                       |
 | ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `setInterval`                 | 1 000 ms | `clearInterval` with the correct ID                                                                                                               |
 | Recursive `setTimeout`        | 937 ms   | `clearTimeout` with the correct ID                                                                                                                |
 | `requestAnimationFrame` chain | ~980 ms  | `cancelAnimationFrame` — **guarded: the rAF chain ID is tracked and any call to `cancelAnimationFrame` with that exact ID is silently swallowed** |
+| `MessageChannel` self-ping    | 800 ms   | Replacing `setInterval`/`setTimeout`/`cancelAnimationFrame` has zero effect — `MessageChannel` is a separate browser message-queue mechanism      |
 
 All timer functions are captured at startup (`_N._setInterval`, `_N._setTimeout`, `_N._requestAnimationFrame`) so even if `window.setInterval` is later replaced, the watchdog timers were already started with the native versions.
 
 **Timer ID protection** — `window.clearInterval`, `window.clearTimeout`, and `window.cancelAnimationFrame` are replaced with guarded versions that silently ignore any attempt to cancel or clear watchdog timer, rAF, or active debugger-trap interval IDs. Legitimate application code that calls these functions on its own IDs is unaffected.
+
+Watchdog timer IDs are stored in a plain `{}` object (not a `Set`) and tested with the `in` operator; trap IDs use the same pattern. This is intentional: `Set.prototype.has`, `.add`, and `.delete` are prototype-chain calls that could be replaced via Self-XSS (`Set.prototype.has = () => false`) to let an attacker pass timer IDs through the guard undetected. The `in` operator and property `delete` are pure language operators — they cannot be overridden from userland JS.
 
 **Visibility-change fast check** — when the tab transitions from background to visible, an immediate full tick runs so an attacker cannot exploit the ~1 s inter-tick window while the tab was hidden.
 
@@ -480,15 +495,15 @@ All timer functions are captured at startup (`_N._setInterval`, `_N._setTimeout`
 
 ### Intentionally excluded from checks
 
-| API                                  | Reason                                                                                                                                                                                                                                                                                     |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `console` namespace                  | Overrides are common and benign (DevTools, logging libraries)                                                                                                                                                                                                                              |
-| `Function.prototype.toString`        | Bootstrap-validated at init time (`.name`, `.length`, `String()` coercion path); `_fnToString` and `Function.prototype.call` are captured into `_N` for use by `_isNative`. Live periodic checks cause false positives because extensions (Adblock, Dark Reader) routinely wrap `toString` |
-| `document.createElement`             | Extensions legitimately create elements (including `<script>`) for their content scripts; blocking this causes widespread false positives on every page load                                                                                                                               |
-| `JSON.stringify` / `JSON.parse`      | DevTools, debugger extensions, and frameworks actively patch these                                                                                                                                                                                                                         |
-| `Promise` / `Promise.prototype.then` | Polyfills and extensions wrap these regularly                                                                                                                                                                                                                                              |
-| `performance.now`                    | Privacy extensions (Brave, uBlock) intentionally add timing jitter                                                                                                                                                                                                                         |
-| `Object.defineProperty`              | Too many legitimate uses across extensions and frameworks                                                                                                                                                                                                                                  |
+| API                                  | Reason                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `console` namespace                  | Overrides are common and benign (DevTools, logging libraries)                                                                                                                                                                                                                                             |
+| `Function.prototype.toString`        | Bootstrap-validated at init time (`.name`, `.length`, `'' + fn` coercion — no `String()` call); `_fnToString` and `Function.prototype.call` are captured into `_N` for use by `_isNative`. Live periodic checks cause false positives because extensions (Adblock, Dark Reader) routinely wrap `toString` |
+| `document.createElement`             | Extensions legitimately create elements (including `<script>`) for their content scripts; blocking this causes widespread false positives on every page load                                                                                                                                              |
+| `JSON.stringify` / `JSON.parse`      | DevTools, debugger extensions, and frameworks actively patch these                                                                                                                                                                                                                                        |
+| `Promise` / `Promise.prototype.then` | Polyfills and extensions wrap these regularly                                                                                                                                                                                                                                                             |
+| `performance.now`                    | Privacy extensions (Brave, uBlock) intentionally add timing jitter                                                                                                                                                                                                                                        |
+| `Object.defineProperty`              | Too many legitimate uses across extensions and frameworks                                                                                                                                                                                                                                                 |
 
 <a id="proactive-network-interception"></a>
 
@@ -496,10 +511,10 @@ All timer functions are captured at startup (`_N._setInterval`, `_N._setTimeout`
 
 Every outbound request is validated against `window.location.origin` before it is allowed to proceed:
 
--   **`fetch`** — blocked and rejected with an error
+-   **`fetch`** — blocked and rejected with an error. URL coercion uses `'' + input` (string-concatenation operator), not `String(input)`, so a `window.String` replacement cannot produce a manipulated URL string
 -   **`XMLHttpRequest.prototype.open`** — blocked and throws synchronously
 -   **`navigator.sendBeacon`** — blocked and returns `false`
--   **`WebSocket`** — connections to any host other than `window.location.hostname` are blocked and trigger a threat alert; same-origin WebSocket connections (if ever legitimately needed) are forwarded transparently
+-   **`WebSocket`** — connections to any **host:port** combination other than `window.location.host` are blocked and trigger a threat alert. The origin check uses the captured `_N.URL` constructor (not the live `window.URL`) to resist a runtime replacement of the URL global. A hostname-only check (old: `location.hostname`) would have allowed `wss://localhost:9999` while the page is on `localhost:8080`, enabling exfiltration to another local service; same-origin WebSocket connections (if ever legitimately needed) are forwarded transparently
 
 SafeNova makes no legitimate external network requests; any attempt is by definition suspicious.
 
@@ -509,13 +524,13 @@ SafeNova makes no legitimate external network requests; any attempt is by defini
 
 When a native function purity check, App function integrity check, or network request interception fires:
 
-1. **Immediately wipe** all `snv-*` keys from both `localStorage` and `sessionStorage` using the captured native `Storage.prototype` references (bypasses any hook that may have been placed on the Storage API by the attacker)
+1. **Immediately wipe** all `snv-*` keys from both `localStorage` and `sessionStorage` using the captured native `Storage.prototype` references (bypasses any hook that may have been placed on the Storage API by the attacker). The 256-byte zero-fill string is built by a plain `for` loop — no `String.prototype.repeat` call — so replacing that method cannot prevent key material from being overwritten
 2. **Clear Service Workers and Cache API (E9)** — unregisters active Service Workers and wipes all data from the browser's CacheStorage. If an attacker manages to execute code (e.g. via Self-XSS), they might try to spawn a rogue Service Worker for persistence or stash intercepted data asynchronously; this guarantees a clean slate
-3. **Directly zero in-memory app state** — `App.key`, `App.container`, `App.clipboard`, and `App.thumbCache` are nullified directly from the daemon's `_wipeAppState()` function, bypassing the event system. This works even if `App.lockContainer` was patched — and the patch itself is detected by the G1 integrity check, triggering this response in the first place
+3. **Directly zero in-memory app state** — `App.key`, `App.container`, `App.clipboard`, and `App.thumbCache` are nullified directly from the daemon’s `_wipeAppState()` function, bypassing the event system. `VFS.init()` and `WinManager.closeAll()` are invoked using **captured references** (snapshotted at `window load`) so a console-level replacement (`VFS.init = () => {}`) before the threat fires cannot prevent the in-memory file tree and open panels from being cleared. The same mechanism handles `App.lockContainer` — whose patch is detected by the G1 integrity check in the first place
 4. Dispatch `snv:lock` event → the application also locks all open containers via the normal code path, clearing derived keys from memory
 5. **Console threat log (G2)** — a styled `console.error` with a red background is emitted, providing a forensic trace. The `console.error` reference is captured at startup so replacing it after load cannot suppress the output
-6. **Debugger trap (G3)** — a `debugger` statement fires every 50 ms for up to 5 minutes. If the attacker has DevTools open, the JS engine pauses at each breakpoint, blocking further console commands. The trap interval ID is guarded by `window.clearInterval` so it cannot be cancelled. When DevTools are closed this is a native no-op with zero performance cost
-7. Show a **security alert overlay** identifying the blocked operation and advising the user to audit browser extensions, with a reload button. The overlay uses a **closed Shadow DOM** so its contents cannot be queried or mutated from `document` scope; a self-healing `MutationObserver` re-appends the overlay if an attacker removes it from the DOM (active for 3 minutes)
+6. **Debugger trap (G3)** — a `debugger` statement fires every 50 ms for up to 5 minutes. If the attacker has DevTools open, the JS engine pauses at each breakpoint, blocking further console commands. The trap interval ID is stored in a plain `{}` object and guarded with the `in` operator (not `Set.prototype.has`) so the guard cannot be bypassed by replacing `Set.prototype`. When DevTools are closed this is a native no-op with zero performance cost
+7. Show a **security alert overlay** identifying the blocked operation and advising the user to audit browser extensions, with a reload button. The overlay uses a **closed Shadow DOM** so its contents cannot be queried or mutated from `document` scope; a self-healing `MutationObserver` re-appends the overlay if an attacker removes it from the DOM (active for 3 minutes). The `reason` string shown inside the overlay is HTML-escaped with a bare `for` loop and character equality checks — no `String.prototype.replace` calls — so replacing that method cannot inject markup into the Shadow DOM
 
 Alerts are rate-limited to one per 10 seconds to prevent alert spam while still reporting every distinct threat.
 
