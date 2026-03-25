@@ -48,6 +48,7 @@ Key properties:
     -   [Technical details](#duress-technical-details)
 -   [🔬 SafeNova Proactive](#safenova-proactive)
     -   [Startup sequence](#proactive-startup-sequence)
+        -   [Why native restoration matters](#proactive-native-restoration-advantage)
     -   [Real-time watchdog](#proactive-watchdog)
     -   [Watchdog resilience](#proactive-watchdog-resilience)
     -   [Intentionally excluded from checks](#proactive-excluded-checks)
@@ -55,6 +56,7 @@ Key properties:
     -   [DOM exfiltration defense](#proactive-dom-exfiltration)
     -   [Threat response](#proactive-threat-response)
     -   [Design philosophy](#proactive-design-philosophy)
+        -   [Hook opacity](#proactive-hook-opacity)
 -   [🔍 Container Integrity Scanner](#container-integrity-scanner)
     -   [Phase 1 — VFS structural checks](#scanner-phase-1)
     -   [Phase 2 — Database-level checks](#scanner-phase-2)
@@ -125,12 +127,12 @@ No external installs needed — it uses the Windows built-in `HttpListener`.
 -   **Session memory** — optionally remember your session per tab (ephemeral, recommended) or persistently until manually signed out, using AES-GCM-encrypted session tokens; persistent sessions survive browser restarts
 -   **Cross-tab session protection** — a container can only be actively open in one browser tab at a time; a lightweight lock protocol detects conflicts and offers instant session takeover
 -   **Container import / export** — portable `.safenova` container files; import reads the archive via streaming `File.slice()` without loading the full file into memory, making multi-gigabyte imports possible; export streams data chunk-by-chunk requiring no single contiguous allocation regardless of container size
--   **Export password guard** — configurable setting (on by default) to require password confirmation before exporting; when disabled, the container key is taken directly from the active session if one is open; if no session is present, a pre-generated export cache (`_exportCache`) stored in IndexedDB is used — the cache contains the AES-256-GCM-encrypted file manifest protected by a **per-container HKDF-SHA-256 key derived from the container’s Argon2id salt** (`info="snv-export-cache-v1"`), making it browser-independent; if the cache is absent or stale (file count or sizes changed), the context menu shows a red dot and falls back to a password prompt — after a successful password-prompted export the cache is rebuilt in IDB automatically so subsequent exports require no password; the cache is invalidated on password change or settings re-enable
+-   **Export password guard** — configurable setting (on by default) to require password confirmation before exporting; when disabled, the container key is taken directly from the active session if one is open; if no session is present, a pre-generated encrypted export cache stored in IndexedDB is used — the cache contains the AES-256-GCM-encrypted file manifest protected by a per-container HKDF-SHA-256 derived key, making it browser-independent; if the cache is absent or stale (file count or sizes changed), the context menu shows a red dot and falls back to a password prompt — after a successful password-prompted export the cache is rebuilt automatically so subsequent exports require no password; the cache is invalidated on password change or settings re-enable
 -   **Quick export button** — dedicated **Export** button in the desktop toolbar provides one-click passwordless export when the export password guard is disabled
 -   **Sort & arrange** — sort icons by name, date, size, or type; drag to custom positions
--   **Secure container deletion** — before permanent erasure, every encrypted blob is cryptographically pre-shredded: inline files have 2 random non-adjacent bytes XOR-flipped with a random value (position and delta are unknown and unlogged); chunked large files have their AES-GCM IV zeroed in the file record without touching the chunk data, making decryption unconditionally impossible and the operation maximally fast
+-   **Secure container deletion** — before permanent erasure, every encrypted blob is cryptographically pre-shredded: inline files have random bytes XOR-flipped (position and delta are unknown and unlogged); large chunked files have their AES-GCM IV zeroed, making decryption unconditionally impossible and the operation maximally fast; heavy internal blobs (deferred workspace data, export cache, audit log) are explicitly nullified before the record is deleted so that the browser immediately releases persistent storage and the freed space is reflected without waiting for lazy garbage collection
 -   **Duress password** — optional panic password that, when entered anywhere (unlock, change password, export), looks exactly like an incorrect password but silently destroys all encrypted data in the background; see [Duress Password](#duress-password) below
--   **SafeNova Proactive** — runtime protection module that loads first in `<head>`, captures all security-critical native function references at startup (crypto, storage, encoding, typed arrays, Blob/URL, compression, timers), validates every capture is truly native (pre-capture tampering guard), hooks outbound network APIs (`fetch`, `XHR.open`, `sendBeacon`, `WebSocket`, `window.open`, `EventSource`, `Worker`/`SharedWorker`) and DOM exfiltration vectors (`setAttribute`, `innerHTML`/`outerHTML`, `insertAdjacentHTML`, `document.write`, `Location` navigation, form submit, resource property setters) to block external requests, silently removes dynamically injected external scripts via MutationObserver, blocks `eval` and `new Function()` constructors, guards `setTimeout`/`setInterval` string callbacks, and runs a quadruple-redundant watchdog (`setInterval` + recursive `setTimeout` + `requestAnimationFrame` chain + `MessageChannel`) with timer-ID protection and a dead man's switch heartbeat — if the watchdog is killed, the app auto-locks all containers
+-   **SafeNova Proactive** — runtime protection module that loads first in `<head>`, captures all security-critical native function references at startup, validates every capture is truly native (pre-capture tampering guard), hooks outbound network APIs (fetch, XHR, sendBeacon, WebSocket, window.open, EventSource, Worker/SharedWorker) and DOM exfiltration vectors (setAttribute, innerHTML/outerHTML, insertAdjacentHTML, document.write, Location navigation, form submit, resource property setters) to block external requests, silently removes dynamically injected external scripts via MutationObserver, blocks `eval` and `new Function()` constructors, guards string callbacks in setTimeout/setInterval, and runs a quadruple-redundant watchdog with timer-ID protection and a dead man's switch heartbeat — if the watchdog is killed, the app auto-locks all containers
 -   **Container integrity scanner** — 28 automated checks (21 VFS structural + 7 database-level) with one-click auto-repair, **Deep Clean** (flattens over-nested folder trees, repairs all metadata), and a backup prompt before any destructive operation; includes file decryption verification that detects corrupted or unreadable blobs (including those silently destroyed by the duress trigger)
 -   **Settings** — three tabs: personalization, statistics, activity logs
 -   **Keyboard shortcuts** — `Delete`, `F2`, `Ctrl+A`, `Ctrl+C/X/V`, `Ctrl+S` (save in editor), `Escape`, `End` (lock container — only when focus is not in a text field)
@@ -180,8 +182,8 @@ SafeNova/
 2. **Unlock** the container — Argon2id derives the key from your password
 3. Files you upload are encrypted with AES-256-GCM before being saved to IndexedDB
 4. The virtual filesystem (folder tree + icon positions) is also encrypted and saved separately
-5. **Lock** the container — the derived container key is wiped from memory; if the **Export password guard** setting is disabled, the pre-generated `_exportCache` (built when the setting was disabled and kept up to date after every file operation) remains in IndexedDB, ready for the next passwordless export
-6. **Delete** the container — first, every encrypted blob is cryptographically pre-shredded (2 random non-adjacent bytes XOR-flipped for inline files; IV zeroed for large chunked files); then all encrypted records, the VFS blob, and the container metadata are permanently deleted from IndexedDB
+5. **Lock** the container — the derived container key is wiped from memory; if the **Export password guard** setting is disabled, a pre-generated export cache (built when the setting was disabled and kept up to date after every file operation) remains in the database, ready for the next passwordless export
+6. **Delete** the container — first, every encrypted blob is cryptographically pre-shredded (random bytes XOR-flipped for inline files; IV zeroed for large chunked files); then heavy internal blobs (deferred workspace data, export cache, audit log) are nullified to force immediate browser-level storage release; finally all encrypted records, the VFS blob, and the container metadata are permanently deleted from IndexedDB
 
 All container data is scoped to the current browser and device. Use **Export Container** to back up or transfer to another device.
 
@@ -197,15 +199,15 @@ Exported containers are saved as `.safenova` files. This is a **self-contained s
 
 ### Archive sections
 
-| Section                      | Role                                                                                                                                                                                                                                                                                                                                                   |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `container.xml`              | Plaintext container manifest: name, creation timestamp, Argon2id salt, and the AES-GCM verification IV and blob needed to authenticate a password at import. No file names or content appear here                                                                                                                                                      |
-| `meta/0`                     | The IV (initialization vector) used to encrypt the VFS blob                                                                                                                                                                                                                                                                                            |
-| `meta/1`                     | The encrypted VFS blob — the complete folder hierarchy, file names, MIME types, sizes, timestamps, icon positions, and folder colors, all ciphertext                                                                                                                                                                                                   |
-| `meta/2`                     | The IV for the encrypted file manifest                                                                                                                                                                                                                                                                                                                 |
-| `meta/3`                     | The encrypted file manifest — a JSON structure mapping each file's internal ID to its byte offset and length within `workspace.bin`, encrypted with the container key. When the export password guard is disabled, this blob is taken directly from the pre-built `_exportCache` stored in the container record, avoiding re-encryption at export time |
-| `safenova_efs/workspace.bin` | A single contiguous block of raw ciphertext — the encrypted content of every file, concatenated end-to-end. Without the decryption key, file boundaries and content are indistinguishable                                                                                                                                                              |
-| `meta/activity_logs/0`       | _(Optional)_ The encrypted activity log, included only when the `exportWithLogs` container setting is enabled                                                                                                                                                                                                                                          |
+| Section                      | Role                                                                                                                                                                                                                                                                                                                                                 |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `container.xml`              | Plaintext container manifest: name, creation timestamp, Argon2id salt, and the AES-GCM verification IV and blob needed to authenticate a password at import. No file names or content appear here                                                                                                                                                    |
+| `meta/0`                     | The IV (initialization vector) used to encrypt the VFS blob                                                                                                                                                                                                                                                                                          |
+| `meta/1`                     | The encrypted VFS blob — the complete folder hierarchy, file names, MIME types, sizes, timestamps, icon positions, and folder colors, all ciphertext                                                                                                                                                                                                 |
+| `meta/2`                     | The IV for the encrypted file manifest                                                                                                                                                                                                                                                                                                               |
+| `meta/3`                     | The encrypted file manifest — a JSON structure mapping each file's internal ID to its byte offset and length within `workspace.bin`, encrypted with the container key. When the export password guard is disabled, this blob is taken directly from the pre-built export cache stored in the container record, avoiding re-encryption at export time |
+| `safenova_efs/workspace.bin` | A single contiguous block of raw ciphertext — the encrypted content of every file, concatenated end-to-end. Without the decryption key, file boundaries and content are indistinguishable                                                                                                                                                            |
+| `meta/activity_logs/0`       | _(Optional)_ The encrypted activity log, included only when the `exportWithLogs` container setting is enabled                                                                                                                                                                                                                                        |
 
 <a id="container-format-design-properties"></a>
 
@@ -217,7 +219,7 @@ The only identifiable plaintext in the archive is the container name in `contain
 
 #### Lazy import
 
-A `.safenova` file can be imported without entering the container password. The archive is parsed via `File.slice()` — only the ZIP directory and small metadata entries are fully read into memory; the `workspace.bin` payload is handled as a `Blob` reference. The encrypted workspace is stored as-is internally, flagged as a `lazyWorkspace`. It is expanded into the local database only on first unlock — so import is instantaneous regardless of container size.
+A `.safenova` file can be imported without entering the container password. The archive is parsed via streaming slicing — only the directory and small metadata entries are fully read into memory; the `workspace.bin` payload is handled as a lightweight reference. The encrypted workspace is stored as-is internally and flagged as a deferred workspace. It is expanded into the local database only on first unlock — so import is instantaneous regardless of container size.
 
 #### Self-authenticating
 
@@ -341,7 +343,7 @@ An attacker with live access to the running browser process (e.g. malicious exte
 | `form-action` | `'none'`                    |
 | `object-src`  | `'none'`                    |
 
-`'unsafe-inline'` is absent from `script-src`. There are no inline `<script>` blocks — the docmode persistence guard (`docmode.js`) and the SafeNova Proactive runtime protection module (`js/proactive/daemon.js`) are loaded as external files in `<head>` before the stylesheet. All JavaScript is loaded via `'self'`. Argon2id WASM compilation is permitted by `'wasm-unsafe-eval'`. `about:` is added to `frame-src` to allow SafeNova Proactive to create a temporary hidden `about:blank` iframe at startup for capturing a pristine, extension-untampered console reference (the iframe is removed from the DOM immediately after capture).
+`'unsafe-inline'` is absent from `script-src`. There are no inline `<script>` blocks — all JavaScript is loaded as external files via `'self'`. Argon2id WASM compilation is permitted by `'wasm-unsafe-eval'`. `about:` is added to `frame-src` to allow SafeNova Proactive to create a temporary hidden iframe at startup for capturing pristine, extension-untampered native references (the iframe is removed from the DOM immediately after capture).
 
 <a id="csp-server-headers"></a>
 
@@ -402,9 +404,9 @@ Because the real password still works, you can unlock the container afterward to
 
 ### Technical details
 
--   The duress hash is stored in IndexedDB as `SHA-256(random_32‑byte_salt ‖ password)` — never exported to `.safenova` files
--   Corruption method: 2 random non-adjacent bytes are XOR-flipped with a random non-zero value in each encrypted blob (inline files). For large chunked files, the AES-GCM IV stored in the file record is zeroed instead — no chunk data is read, making corruption of large files maximally fast. Position and XOR delta are unknown, unlogged, and unreproducible. Any single-byte change in AES-GCM ciphertext, or a zeroed IV, causes authentication failure for the entire file
--   After triggering, the `duressHash` field and `_exportCache` are deleted from the container record — no forensic residue
+-   The duress hash is stored in IndexedDB as a salted SHA-256 hash — never exported to `.safenova` files
+-   Corruption method: random bytes are XOR-flipped with a random non-zero value in each encrypted blob (inline files). For large chunked files, the AES-GCM IV stored in the file record is zeroed instead — no chunk data is read, making corruption of large files maximally fast. Position and XOR delta are unknown, unlogged, and unreproducible. Any byte change in AES-GCM ciphertext, or a zeroed IV, causes authentication failure for the entire file
+-   After triggering, the duress hash and export cache are deleted from the container record — no forensic residue
 -   It can be toggled on and off in Settings → Danger Zone
 -   The duress password must be at least 4 characters and must differ from the main password
 
@@ -414,26 +416,41 @@ Because the real password still works, you can unlock the container afterward to
 
 ## 🛡️ SafeNova Proactive
 
-SafeNova Proactive is a self-contained **anti-tamper runtime integrity guard** (`daemon.js`) that loads in `<head>` **before every other application script**. Its threat model is Self-XSS and malicious browser extensions (MV2 `document_start` content scripts, cosmetic-filter injections): both classes of attack require modifying the JavaScript runtime environment in a way that can be detected by capturing native references before any attacker code runs. The application refuses to start if the guard is absent or failed to initialize.
+SafeNova Proactive is a self-contained **anti-tamper runtime integrity guard** that loads in `<head>` **before every other application script**. Its threat model is Self-XSS and malicious browser extensions (MV2 `document_start` content scripts, cosmetic-filter injections): both classes of attack require modifying the JavaScript runtime environment in a way that can be detected by capturing native references before any attacker code runs. The application refuses to start if the guard is absent or failed to initialize.
 
-> ![](./pics/screenshot_proactive.png) **Silent by design.** Proactive runs entirely in the background with zero user-visible presence during normal operation. No indicators, no UI overlays, no interaction required — just quiet, constant verification of the cryptographic runtime underneath the application. Think of it as an immune system rather than antivirus: always active, completely invisible, and only surfaces when something genuinely suspicious is detected. The application loads and responds exactly as if Proactive were not there — because when everything checks out, it truly isn’t.
+> ![](./pics/screenshot_proactive.png) **Silent by design.** Proactive runs entirely in the background with zero user-visible presence during normal operation. No indicators, no UI overlays, no interaction required — just quiet, constant verification of the cryptographic runtime underneath the application. Think of it as an immune system rather than antivirus: always active, completely invisible, and only surfaces when something genuinely suspicious is detected.
 
 <a id="proactive-startup-sequence"></a>
 
 ### Startup sequence
 
-1. **Earliest captures** — at the absolute first line of the IIFE, before any other code, five additional security-critical primitives are captured as IIFE-private `const` bindings that cannot be reassigned: `Object.freeze` (used to actually freeze `_N`), `RegExp.prototype.test` (used inside `_isNative` via `Reflect.apply`), `Array.prototype.push` (captured; array appends use `arr[arr.length]=` index assignment to avoid any call), `String.prototype.slice` (used in `_nukeStorage` to check key prefixes), and the hex-char lookup string `_HEX_CHARS = '0123456789abcdef'` (used for canary generation and `_ALERT_HOST_CLS` — no `Number.prototype.toString` calls anywhere). Replacing any of these via a MV2 `document_start` extension is detected by the structural boot check
-2. **Pre-existence check** — before building `_N`, daemon.js checks if `window.__snvGuard` already exists on the window. If it does, an attacker pre-defined it (e.g. via MV2 `document_start`) to keep `active: true` while blocking the real guard. This taints the boot and causes `__snvVerify()` to return `false`
-3. **Bootstrap validation** — `Function.prototype.toString` and `Function.prototype.call` are structurally validated (`.name`, `.length`, and string-coercion via `'' + fn` — no `String()` call) before `_N` is built. All regex tests in bootstrap use `_reflectApply(_reTest, ...)` so a live `RegExp.prototype.test` replacement cannot make the checks return `true` for fakes. Either failing taints the boot
-4. **Structural validation of early captures** — `_reTest`, `_freeze`, `_arrPush`, and `_strSlice` are validated via `.name` structural checks (cannot use `_isNative` — circular). Naive spoofing that forgets to copy the function name is caught here
-5. **Capture** references to all security-critical native functions at the earliest possible moment — before any extension or injected code can tamper with them. `_N` is frozen using the captured `_freeze` reference (not the live `Object.freeze`) so replacing `Object.freeze` cannot leave `_N` mutable
-6. **Pre-capture validation** — every captured reference is verified as truly native using indexed for-loops (not `for...of`, which relies on `Array.prototype[Symbol.iterator]`). If _any_ capture is already non-native the guard is tainted and the app refuses to boot
-7. Install protective hooks on outbound network APIs (`fetch`, `XMLHttpRequest.prototype.open`, `navigator.sendBeacon`) and `WebSocket`
-8. Expose three non-configurable window properties:
-    - `window.__snvGuard` — `{ active, version: 6, _c: <canary> }` — frozen boot-status token
-    - `window.__snvVerify()` — closure-private canary cross-check; `main.js` calls this instead of reading `active` alone
-    - `window.__snvEmergencyLock()` — direct `localStorage`/`sessionStorage` wipe + in-memory app state clear, bypasses the event system
-9. Start the watchdog — **four independent timer mechanisms** running in parallel
+1. **Earliest captures** — at the very first line of execution, before any other code runs, a small set of core language primitives (`Object.freeze`, `RegExp.prototype.test`, `Array.prototype.push`, `String.prototype.slice`) is captured into private constants that cannot be reassigned from outside. If any of these were already replaced by a MV2 `document_start` extension, the structural boot check will detect it
+2. **Native restoration via hidden iframe** — a temporary hidden `about:blank` iframe is created whose browsing context has never been touched by extensions (MV2 extensions only target the main window, not dynamically-created child frames). If the DOM primitives needed to create the iframe are verified as native, **50+ security-critical functions** are restored back to their pristine state on the main window from the iframe's untouched copies:
+    - **Core language primitives** — `Object.defineProperty`, `Object.freeze`, `Reflect.apply`, `Reflect.construct`, and other foundational methods — restored first so all subsequent restoration steps use the native version
+    - **Window globals** — `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `Worker`, `SharedWorker`, `MutationObserver`, `URL`, `Blob`, typed arrays, encoding/decoding, timers, `eval`, `Function`, compression streams
+    - **Crypto** — `crypto.getRandomValues` and all 12 `SubtleCrypto` methods are restored individually (`window.crypto` itself is `[Unforgeable]` and cannot be replaced)
+    - **Prototype methods** — XHR, EventTarget, Element, Node, Document, Storage, IDB, Form, Location, Navigator, typed array, and URL methods
+    - **Console** — a tamper-proof console reference is captured from the iframe, immune to main-window replacement by extensions
+    - The iframe is removed from the DOM immediately after; captured JS references survive removal
+3. **Pre-existence check** — if a guard marker already exists on `window`, it means an attacker pre-defined it via `document_start` to fake the guard as active. This taints the boot
+4. **Bootstrap validation** — `Function.prototype.toString` and `Function.prototype.call` are structurally validated (name, arity, and string coercion — using concatenation operators, not function calls) before building the capture registry. All regex tests in the bootstrap use captured `Reflect.apply`, so replacing `RegExp.prototype.test` at runtime cannot make fakes pass
+5. **Structural validation of early captures** — the primitives captured in step 1 are validated by their structural properties (name, arity). This catches naive spoofing that forgets to replicate the original function's metadata
+6. **Capture registry** — all security-critical native references are frozen into a single immutable object using the captured (not live) `Object.freeze`. From this point forward, the guard never calls live globals — only its own captured copies
+7. **Pre-capture validation** — every captured reference is verified as truly native using indexed for-loops (not `for...of`, which depends on `Symbol.iterator`). If any capture is already non-native, the guard is tainted and the app refuses to boot
+8. **Install protective hooks** — all hooks (network, DOM, timer, constructor, code-injection) are wrapped in an opaque forwarder. Calling `toString()` on any hooked function (e.g. `fetch.toString()` in the DevTools console) reveals only the forwarder — the actual security logic is unreachable from outside the closure. The forwarder uses captured `Reflect.apply` instead of `.apply()`, making it immune to `Function.prototype.apply` replacement
+9. Expose three non-configurable window properties:
+    - A frozen boot-status token with a closure-private canary for cross-checks
+    - A verification function that the application calls at startup to confirm the guard is genuine
+    - An emergency lock function that directly wipes all session storage and in-memory state, bypassing the event system
+10. Start the watchdog — **four independent timer mechanisms** running in parallel
+
+<a id="proactive-native-restoration-advantage"></a>
+
+#### Why native restoration matters
+
+The iframe restoration in step 2 is the single most impactful defense in the entire startup sequence. Without it, any MV2 extension running at `document_start` — or a compromised CDN that injects a `<script>` above the guard — could replace `crypto.subtle.encrypt`, `fetch`, `Reflect.apply`, or any other global **before** the guard even begins to execute. A pure capture-and-validate approach can only detect such pre-load tampering after the fact and refuse to boot, but provides no recovery path.
+
+Native restoration changes the equation: even if an attacker ran code _before_ the guard, the iframe's browsing context provides untouched native references directly from the browser engine. By restoring 50+ critical functions on the main window from these pristine copies, the guard **undoes pre-load replacements** — the attacker's hooks are overwritten _before_ anything is captured. This eliminates roughly **95% of function-replacement attack vectors** that would otherwise succeed against a capture-only design, reducing the viable pre-load attack surface to scenarios where the browser engine itself is compromised (which is outside the threat model of any userland JS defense).
 
 <a id="proactive-watchdog"></a>
 
@@ -445,35 +462,35 @@ Each tick performs **five independent checks**:
 
 **Native function purity** — verifies that the following functions are still fully native using the captured `Function.prototype.toString` reference (immune to meta-spoofing). Any substitution fires an alert:
 
-| Function                                                               | Purpose                                                                                   |
-| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `crypto.getRandomValues`                                               | IV / key generation                                                                       |
-| `crypto.subtle.{encrypt,decrypt,importKey,exportKey,deriveKey,digest}` | All cryptographic operations                                                              |
-| `IDBFactory.prototype.open`                                            | IndexedDB access                                                                          |
-| `Storage.prototype.{getItem,setItem,removeItem}`                       | Session key storage                                                                       |
-| `btoa` / `atob`                                                        | Base-64 encode/decode                                                                     |
-| `TextEncoder.prototype.encode` / `TextDecoder.prototype.decode`        | Text serialization / deserialization                                                      |
-| `Uint8Array`, `.prototype.{set,subarray,slice}`                        | Typed array integrity                                                                     |
-| `ArrayBuffer`, `.prototype.slice`                                      | Binary buffer integrity                                                                   |
-| `DataView`                                                             | Binary data views                                                                         |
-| `Blob`                                                                 | File blob construction                                                                    |
-| `URL`                                                                  | URL parsing — captured and checked so a runtime replacement cannot bypass origin checks   |
-| `URL.createObjectURL` / `URL.revokeObjectURL`                          | Blob URL lifecycle                                                                        |
-| `CompressionStream` / `DecompressionStream` _(if available)_           | Compression pipeline integrity                                                            |
-| `Function.prototype.call` / `.apply`                                   | Meta-method hardening                                                                     |
-| `Reflect.apply`                                                        | `_isNative` core — must stay native so fake-function detection cannot be bypassed         |
-| `EventTarget.prototype.addEventListener` / `.dispatchEvent`            | Event subscription and heartbeat                                                          |
-| `XMLHttpRequest.prototype.send`                                        | XHR send hook hardening                                                                   |
-| `RegExp.prototype.test`                                                | `_isNative` regex match — replacing with `()=>true` would make every function look native |
-| `Object.freeze`                                                        | `_N` immutability — replacing with `x=>x` would leave captured refs mutable               |
-| `Array.prototype.push`                                                 | Captured for validation; runtime appends use `arr[arr.length]=` index assignment          |
-| `String.prototype.slice`                                               | Prefix check in `_nukeStorage`                                                            |
-| `Array.prototype[Symbol.iterator]`                                     | Array iteration — poisoning this would silently skip validation and watchdog loops        |
+| Function                                                               | Purpose                                                            |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `crypto.getRandomValues`                                               | IV / key generation                                                |
+| `crypto.subtle.{encrypt,decrypt,importKey,exportKey,deriveKey,digest}` | All cryptographic operations                                       |
+| `IDBFactory.prototype.open`                                            | IndexedDB access                                                   |
+| `Storage.prototype.{getItem,setItem,removeItem}`                       | Session key storage                                                |
+| `btoa` / `atob`                                                        | Base-64 encode/decode                                              |
+| `TextEncoder.prototype.encode` / `TextDecoder.prototype.decode`        | Text serialization / deserialization                               |
+| `Uint8Array`, `.prototype.{set,subarray,slice}`                        | Typed array integrity                                              |
+| `ArrayBuffer`, `.prototype.slice`                                      | Binary buffer integrity                                            |
+| `DataView`                                                             | Binary data views                                                  |
+| `Blob`                                                                 | File blob construction                                             |
+| `URL`, `URL.createObjectURL` / `URL.revokeObjectURL`                   | URL parsing and blob URL lifecycle                                 |
+| `CompressionStream` / `DecompressionStream` _(if available)_           | Compression pipeline integrity                                     |
+| `Function.prototype.call` / `.apply`                                   | Meta-method hardening                                              |
+| `Reflect.apply`                                                        | Core of the native-check mechanism — must stay native              |
+| `EventTarget.prototype.addEventListener` / `.dispatchEvent`            | Event subscription and heartbeat                                   |
+| `XMLHttpRequest.prototype.send`                                        | XHR send path hardening                                            |
+| `RegExp.prototype.test`                                                | Native-check regex — replacing with `()=>true` would bypass checks |
+| `Object.freeze`                                                        | Capture registry immutability                                      |
+| `Array.prototype.push`                                                 | Captured for validation                                            |
+| `String.prototype.slice`                                               | Key prefix checking in storage wipe                                |
+| `Array.prototype[Symbol.iterator]`                                     | Poisoning this would silently skip validation loops                |
 
-**Dead man's switch heartbeat** — every tick dispatches `CustomEvent('snv:alive', { detail: { n } })` with a **monotonic counter** `n` that increments in the IIFE closure. `main.js` only accepts heartbeat events where `n > lastN` **and** `n ≤ lastN + 15` (upper-bound injection guard). Without the cap a Self-XSS attacker could dispatch a single event with `n = Number.MAX_SAFE_INTEGER`, permanently advancing the expected counter so all real daemon ticks are rejected — forcing a lock in 3 seconds. The window of 15 covers ≥5 s of genuine timer jitter (three mechanisms at ~1 tick/s). An attacker cannot read `_heartbeatN` from the daemon’s private closure. If more than 3 seconds pass without a valid heartbeat the watchdog has been killed and all open containers are **automatically locked** — derived keys are wiped from memory.
-**App function integrity (G1)** — at window `load`, function references for `Crypto.encrypt`, `Crypto.decrypt`, `Crypto.decryptBin`, `Crypto.deriveKey`, `Crypto.deriveKeyAndRaw`, and `App.lockContainer` are captured into a frozen snapshot. Every tick compares live values against that snapshot by identity (`!==`). A Self-XSS attack that replaces any of these via the DevTools console (e.g. `App.lockContainer = () => {}`) is detected on the very next tick and triggers a full threat response.
+**Dead man's switch heartbeat** — every tick dispatches a heartbeat event with a **monotonic counter** that increments inside the private closure. The application only accepts events where the counter is strictly greater than the last seen value **and** within a bounded window (guards against injection of extremely large counter values that would permanently desync the heartbeat). An attacker cannot read or predict the counter from outside the closure. If more than 3 seconds pass without a valid heartbeat, the watchdog has been killed and all open containers are **automatically locked** — derived keys are wiped from memory.
 
-**Script-scope shadowing (Crypto)** — the bare `Crypto` identifier resolves to the app’s `const Crypto = (…)()` module (declared in `crypto.js`) via the JS declarative environment record, which is checked _before_ the object environment record where `window.Crypto` (WebCrypto API) lives. The presence of `.encrypt` (app) vs `.subtle` (WebCrypto) is used to confirm the correct object is being checked, eliminating false positives.
+**App function integrity** — at window `load`, references to all critical application functions (encrypt, decrypt, key derivation, container lock, etc.) are captured into a frozen snapshot. Every tick compares live values by identity. A Self-XSS attack that replaces any of these via the DevTools console is detected on the very next tick and triggers a full threat response.
+
+**Scope shadowing guard** — the app's encryption module and the browser's built-in `window.Crypto` (WebCrypto API) share the same identifier. The watchdog confirms it is checking the correct object (app module vs. WebCrypto) by probing for app-specific methods, eliminating false positives.
 <a id="proactive-watchdog-resilience"></a>
 
 ### Watchdog resilience
@@ -487,11 +504,11 @@ The watchdog cannot be killed by a single call to `clearInterval` or by replacin
 | `requestAnimationFrame` chain | ~980 ms  | `cancelAnimationFrame` — **guarded: the rAF chain ID is tracked and any call to `cancelAnimationFrame` with that exact ID is silently swallowed** |
 | `MessageChannel` self-ping    | 800 ms   | Replacing `setInterval`/`setTimeout`/`cancelAnimationFrame` has zero effect — `MessageChannel` is a separate browser message-queue mechanism      |
 
-All timer functions are captured at startup (`_N._setInterval`, `_N._setTimeout`, `_N._requestAnimationFrame`) so even if `window.setInterval` is later replaced, the watchdog timers were already started with the native versions.
+All timer functions are captured at startup so even if `window.setInterval` is later replaced, the watchdog timers were already started with the native versions.
 
 **Timer ID protection** — `window.clearInterval`, `window.clearTimeout`, and `window.cancelAnimationFrame` are replaced with guarded versions that silently ignore any attempt to cancel or clear watchdog timer, rAF, or active debugger-trap interval IDs. Legitimate application code that calls these functions on its own IDs is unaffected.
 
-Watchdog timer IDs are stored in a plain `{}` object (not a `Set`) and tested with the `in` operator; trap IDs use the same pattern. This is intentional: `Set.prototype.has`, `.add`, and `.delete` are prototype-chain calls that could be replaced via Self-XSS (`Set.prototype.has = () => false`) to let an attacker pass timer IDs through the guard undetected. The `in` operator and property `delete` are pure language operators — they cannot be overridden from userland JS.
+Watchdog timer IDs are stored using plain object properties and tested with the `in` operator — not `Set`. This is intentional: `Set.prototype.has` could be replaced via Self-XSS to let an attacker's timer IDs pass through the guard undetected. The `in` operator is a language-level construct — it cannot be overridden from userland JS.
 
 **Visibility-change fast check** — when the tab transitions from background to visible, an immediate full tick runs so an attacker cannot exploit the ~1 s inter-tick window while the tab was hidden.
 
@@ -499,38 +516,39 @@ Watchdog timer IDs are stored in a plain `{}` object (not a `Set`) and tested wi
 
 ### Intentionally excluded from checks
 
-| API                                  | Reason                                                                                                                                                                                                                                                                                                                                                                  |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `console` namespace                  | Overrides are common and benign (DevTools, logging libraries)                                                                                                                                                                                                                                                                                                           |
-| `Function.prototype.toString`        | Bootstrap-validated at init time (`.name`, `.length`, `'' + fn` coercion — no `String()` call); `_fnToString` and `Function.prototype.call` are captured into `_N` for use by `_isNative`. Live periodic checks cause false positives because extensions (Adblock, Dark Reader) routinely wrap `toString`                                                               |
-| `document.createElement`             | Extensions legitimately create elements (including `<script>`) for their content scripts; blocking this causes widespread false positives. **Exception:** `<script>` elements with an external `src=` injected dynamically after page load **are** silently removed from the DOM and logged to the console by the MutationObserver layer — no full modal alert is shown |
-| `JSON.stringify` / `JSON.parse`      | DevTools, debugger extensions, and frameworks actively patch these                                                                                                                                                                                                                                                                                                      |
-| `Promise` / `Promise.prototype.then` | Polyfills and extensions wrap these regularly                                                                                                                                                                                                                                                                                                                           |
-| `performance.now`                    | Privacy extensions (Brave, uBlock) intentionally add timing jitter                                                                                                                                                                                                                                                                                                      |
-| `Object.defineProperty`              | Too many legitimate uses across extensions and frameworks                                                                                                                                                                                                                                                                                                               |
+| API                                  | Reason                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `console` namespace                  | Overrides are common and benign (DevTools, logging libraries)                                                                                                                                                                                                                                                                             |
+| `Function.prototype.toString`        | Bootstrap-validated at init time by structural checks (name, arity, string coercion). Live periodic checks cause false positives because extensions (Adblock, Dark Reader) routinely wrap `toString`                                                                                                                                      |
+| `document.createElement`             | Extensions legitimately create elements (including `<script>`) for their content scripts; blocking this causes widespread false positives. **Exception:** `<script>` elements with an external `src=` injected dynamically after page load **are** silently removed from the DOM and logged to the console — no full modal alert is shown |
+| `JSON.stringify` / `JSON.parse`      | DevTools, debugger extensions, and frameworks actively patch these                                                                                                                                                                                                                                                                        |
+| `Promise` / `Promise.prototype.then` | Polyfills and extensions wrap these regularly                                                                                                                                                                                                                                                                                             |
+| `performance.now`                    | Privacy extensions (Brave, uBlock) intentionally add timing jitter                                                                                                                                                                                                                                                                        |
+| `Object.defineProperty`              | Too many legitimate uses across extensions and frameworks                                                                                                                                                                                                                                                                                 |
 
 <a id="proactive-network-interception"></a>
 
 ### Network request interception
 
-Every outbound request is validated against `window.location.origin` before it is allowed to proceed:
+Every outbound request is validated against `window.location.origin` before it is allowed to proceed. The origin check explicitly whitelists `data:` URLs (inline resources such as canvas-generated thumbnails) and browser extension schemes (`chrome-extension:`, `moz-extension:`, `safari-web-extension:`) to prevent false positives from the app's own data URLs and legitimate user-installed extensions:
 
--   **`fetch`** — blocked and rejected with an error. URL coercion uses `'' + input` (string-concatenation operator), not `String(input)`, so a `window.String` replacement cannot produce a manipulated URL string
+-   **`fetch`** — blocked and rejected with an error
 -   **`XMLHttpRequest.prototype.open`** — blocked and throws synchronously
 -   **`navigator.sendBeacon`** — blocked and returns `false`
--   **`WebSocket`** — connections to any **host:port** combination other than `window.location.host` are blocked and trigger a threat alert. The origin check uses the captured `_N.URL` constructor (not the live `window.URL`) to resist a runtime replacement of the URL global. A hostname-only check (old: `location.hostname`) would have allowed `wss://localhost:9999` while the page is on `localhost:8080`, enabling exfiltration to another local service; same-origin WebSocket connections (if ever legitimately needed) are forwarded transparently
+-   **`WebSocket`** — connections to any **host:port** combination other than the current origin are blocked and trigger a threat alert. The origin check uses a captured URL constructor (immune to runtime replacement). Same-origin WebSocket connections are forwarded transparently
 -   **`window.open`** — external URLs blocked; same-origin popups forwarded normally
 -   **`EventSource`** — external URLs blocked at construction; an `EventSource` to an external host would establish a persistent covert SSE channel for data exfiltration
 -   **`Worker` / `SharedWorker`** — `data:` blob workers and external-URL workers are blocked; `blob:` workers with external embedded URLs are also rejected. Rogue workers could bypass all same-page hooks and exfiltrate data independently
--   **`setTimeout` / `setInterval` string callbacks (E14)** — string-form callbacks (e.g. `setTimeout("eval(code)", 0)`) are stripped to a no-op. Function-form callbacks are forwarded normally
--   **`eval` (E15)** — replaced with a non-configurable property that throws synchronously; cannot be restored via `Object.defineProperty` after the guard runs
--   **`new Function()` (E16)** — the `Function` constructor is proxied; any call via `new Function(...)` or `Function(...)` throws synchronously
+-   **`ServiceWorker` registration** — blocked preventively. A rogue Service Worker could intercept all fetches on the next page load and inject code before the guard runs. Existing registrations are removed during the threat response
+-   **`setTimeout` / `setInterval` string callbacks** — string-form callbacks (e.g. `setTimeout("eval(code)", 0)`) are stripped to a no-op. Function-form callbacks are forwarded normally
+-   **`eval`** — replaced with a non-configurable, non-writable property that throws synchronously; cannot be restored after the guard runs
+-   **`new Function()`** — the `Function` constructor is proxied; calls via `new Function(...)` throw synchronously. Plain `Function()` calls without `new` (used by feature detection, extensions, etc.) are forwarded to the native constructor — only the constructor path is dangerous
 
 SafeNova makes no legitimate external network requests; any attempt is by definition suspicious.
 
 <a id="proactive-dom-exfiltration"></a>
 
-### DOM exfiltration defense (D2)
+### DOM exfiltration defense
 
 A second protection layer covers DOM-level exfiltration vectors — APIs that can inject external resources or redirect the page without going through the network layer directly.
 
@@ -545,10 +563,10 @@ A second protection layer covers DOM-level exfiltration vectors — APIs that ca
 | `HTMLFormElement.submit`                 | External `action=` URLs blocked                                                                                                                                                                                                                                                                                                                                                                                |
 | Resource property setters                | `HTMLImageElement.src`, `HTMLScriptElement.src`, `HTMLIFrameElement.src`, `HTMLVideoElement.src`, `HTMLAudioElement.src`, `HTMLEmbedElement.src`, `HTMLObjectElement.data`, `HTMLLinkElement.href` — external URL assignments are blocked. For `<script>.src` specifically the block is **silent**: the element is not loaded, a console trace is written, but no modal alert is shown (reduces alert fatigue) |
 
-**MutationObserver defense-in-depth (section 8b)** — a `MutationObserver` watches the entire `document.documentElement` subtree and catches attacks that bypass the property/method hooks above:
+**MutationObserver defense-in-depth** — a `MutationObserver` watches the entire document subtree and catches attacks that bypass the property/method hooks above:
 
 -   **Added elements** — newly appended nodes are scanned for external resource attributes or `on*` handlers; threatening attributes are removed and a full alert fires
--   **Dynamically injected `<script src="https://...">` elements** — silently removed from the DOM; a `console.error` trace is written via the captured `_N.consoleError` reference (which cannot be suppressed by replacing `console.error` after load). Same-origin, relative-path, and inline `<script>` elements are left untouched
+-   **Dynamically injected `<script src="https://...">` elements** — silently removed from the DOM; a console trace is written via a tamper-proof console reference (immune to `console.error` replacement after load). Same-origin, relative-path, and inline `<script>` elements are left untouched
 -   **Attribute mutations** — attribute changes on existing elements that add an external resource URL or an `on*` handler are caught and reversed; `href` changes on `<a>` and `<area>` elements are excluded (navigation-only)
 
 ---
@@ -559,13 +577,13 @@ A second protection layer covers DOM-level exfiltration vectors — APIs that ca
 
 When a native function purity check, App function integrity check, or network request interception fires:
 
-1. **Immediately wipe** all `snv-*` keys from both `localStorage` and `sessionStorage` using the captured native `Storage.prototype` references (bypasses any hook that may have been placed on the Storage API by the attacker). The 256-byte zero-fill string is built by a plain `for` loop — no `String.prototype.repeat` call — so replacing that method cannot prevent key material from being overwritten
-2. **Clear Service Workers and Cache API (E9)** — unregisters active Service Workers and wipes all data from the browser's CacheStorage. If an attacker manages to execute code (e.g. via Self-XSS), they might try to spawn a rogue Service Worker for persistence or stash intercepted data asynchronously; this guarantees a clean slate
-3. **Directly zero in-memory app state** — `App.key`, `App.container`, `App.clipboard`, and `App.thumbCache` are nullified directly from the daemon’s `_wipeAppState()` function, bypassing the event system. `VFS.init()` and `WinManager.closeAll()` are invoked using **captured references** (snapshotted at `window load`) so a console-level replacement (`VFS.init = () => {}`) before the threat fires cannot prevent the in-memory file tree and open panels from being cleared. The same mechanism handles `App.lockContainer` — whose patch is detected by the G1 integrity check in the first place
-4. Dispatch `snv:lock` event → the application also locks all open containers via the normal code path, clearing derived keys from memory
-5. **Console threat log (G2)** — a styled `console.error` with a red background is emitted, providing a forensic trace. The `console.error` reference is captured at startup so replacing it after load cannot suppress the output
-6. **Debugger trap (G3)** — a `debugger` statement fires every 50 ms for up to 5 minutes. If the attacker has DevTools open, the JS engine pauses at each breakpoint, blocking further console commands. The trap interval ID is stored in a plain `{}` object and guarded with the `in` operator (not `Set.prototype.has`) so the guard cannot be bypassed by replacing `Set.prototype`. When DevTools are closed this is a native no-op with zero performance cost
-7. Show a **security alert overlay** identifying the blocked operation and advising the user to audit browser extensions, with a reload button. The overlay uses a **closed Shadow DOM** so its contents cannot be queried or mutated from `document` scope; a self-healing `MutationObserver` re-appends the overlay if an attacker removes it from the DOM (active for 3 minutes). The `reason` string shown inside the overlay is HTML-escaped with a bare `for` loop and character equality checks — no `String.prototype.replace` calls — so replacing that method cannot inject markup into the Shadow DOM
+1. **Immediately wipe** all session keys from both `localStorage` and `sessionStorage` using captured native storage references (bypasses any hook placed on the Storage API by the attacker)
+2. **Clear Service Workers and Cache API** — unregisters active Service Workers and wipes all browser cache data. This prevents an attacker from spawning a rogue Service Worker for persistence or stashing intercepted data asynchronously
+3. **Directly zero in-memory app state** — all sensitive state (encryption key, container data, clipboard, thumbnail cache) is nullified directly, bypassing the event system. Critical cleanup functions are invoked using **captured references** snapshotted at window `load`, so a console-level replacement before the threat fires cannot prevent cleanup
+4. Dispatch a lock event — the application locks all open containers via the normal code path, clearing derived keys from memory
+5. **Console threat log** — a styled `console.error` with a red background is emitted via a tamper-proof console reference, providing a forensic trace that cannot be suppressed
+6. **Debugger trap** — a `debugger` statement fires every 50 ms for up to 5 minutes. If the attacker has DevTools open, the JS engine pauses at each breakpoint, blocking further console commands. When DevTools are closed, this is a native no-op with zero performance cost
+7. Show a **security alert overlay** identifying the blocked operation and advising the user to audit browser extensions, with a reload button. The overlay uses a **closed Shadow DOM** so its contents cannot be queried or mutated from `document` scope; a self-healing `MutationObserver` re-appends the overlay if an attacker removes it from the DOM (active for 3 minutes)
 
 Alerts are rate-limited to one per 10 seconds to prevent alert spam while still reporting every distinct threat.
 
@@ -577,19 +595,35 @@ Alerts are rate-limited to one per 10 seconds to prevent alert spam while still 
 
 SafeNova Proactive is built around one central principle: **protect as many JS primitives and APIs as possible, while using them as little as possible itself.**
 
-All security-critical references are captured once at the very top of the IIFE into the frozen `_N` object — a snapshot of the JS runtime taken before any extension or injected script can interfere. From that point on, the daemon never calls live globals. Every internal operation that needs a JS built-in goes through `_N`:
+All security-critical references are captured once at the very top of execution into a frozen snapshot — a frozen image of the JS runtime taken before any extension or injected script can interfere. From that point on, the guard never calls live globals. Every internal operation that needs a JS built-in goes through the captured snapshot:
 
-| Instead of...                      | Proactive uses...        | Why                                                  |
-| ---------------------------------- | ------------------------ | ---------------------------------------------------- |
-| `window.fetch`                     | `_N.fetch`               | Immune to post-load `window.fetch = ...` replacement |
-| `Array.prototype.push`             | `arr[arr.length] = x`    | Index assignment cannot be hooked                    |
-| `for...of`                         | Indexed `for` loops      | Immune to `Symbol.iterator` poisoning                |
-| `new Set()` / `Set.prototype.has`  | `key in plainObject`     | `in` is a language operator, unhookable              |
-| `String.prototype.match` / `.exec` | Manual `indexOf` loops   | Avoids hookable regex prototype methods              |
-| `String(x)`                        | `'' + x`                 | Concatenation operator, not a function call          |
-| `Array.prototype.slice`            | Captured `_strSlice` ref | Survives `Array.prototype.slice` replacement         |
+| Instead of...                      | Proactive uses...      | Why                                                  |
+| ---------------------------------- | ---------------------- | ---------------------------------------------------- |
+| `window.fetch`                     | Captured reference     | Immune to post-load `window.fetch = ...` replacement |
+| `Array.prototype.push`             | `arr[arr.length] = x`  | Index assignment cannot be hooked                    |
+| `for...of`                         | Indexed `for` loops    | Immune to `Symbol.iterator` poisoning                |
+| `new Set()` / `Set.prototype.has`  | `key in plainObject`   | `in` is a language operator, unhookable              |
+| `String.prototype.match` / `.exec` | Manual `indexOf` loops | Avoids hookable regex prototype methods              |
+| `String(x)`                        | `'' + x`               | Concatenation operator, not a function call          |
+| `Array.prototype.slice`            | Captured reference     | Survives prototype replacement                       |
 
-As a direct result, the integrity-checking core is **well-isolated and resistant to most hook-based attacks**: replacing `window.fetch`, `Array.prototype.push`, or any other live global after page load cannot change daemon behaviour — the daemon has already captured what it needs, validates those captures on every watchdog tick, and would detect the replacement before an attacker could leverage it.
+As a direct result, the integrity-checking core is **well-isolated and resistant to most hook-based attacks**: replacing `window.fetch`, `Array.prototype.push`, or any other live global after page load cannot change the guard's behaviour — it has already captured what it needs, validates those captures on every watchdog tick, and would detect the replacement before an attacker could leverage it.
+
+<a id="proactive-hook-opacity"></a>
+
+#### Hook opacity
+
+Every public hook function placed on `window` or prototypes is wrapped in an opaque forwarder. When an attacker inspects hooked functions via `toString()` in the DevTools console, they see only the forwarder shell — the actual security logic is hidden inside the closure and unreachable from outside. **All 26 hooks** share this identical opaque signature:
+
+| Category                | Hooks                                                                                                                                                                                          |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Network**             | `fetch`, `XMLHttpRequest.prototype.open`, `navigator.sendBeacon`, `WebSocket`, `window.open`, `EventSource`                                                                                    |
+| **DOM exfiltration**    | `Element.prototype.setAttribute`, `innerHTML` setter, `outerHTML` setter, `insertAdjacentHTML`, `document.write`, `document.writeln`, `Location.assign/replace/href`, `HTMLFormElement.submit` |
+| **Resource properties** | `img.src`, `script.src`, `iframe.src`, `video.src`, `audio.src`, `embed.src`, `object.data`, `link.href`                                                                                       |
+| **Code injection**      | `window.eval`, `window.Function` (`new Function()` is blocked; plain `Function()` calls are forwarded — only the constructor path is dangerous)                                                |
+| **Timer guards**        | `setTimeout` (string callback), `setInterval` (string callback)                                                                                                                                |
+| **Watchdog protection** | `clearInterval`, `clearTimeout`, `cancelAnimationFrame`                                                                                                                                        |
+| **Workers**             | `Worker`, `SharedWorker`, `ServiceWorkerContainer.register`                                                                                                                                    |
 
 ---
 
@@ -667,13 +701,7 @@ SafeNova schedules AES-GCM operations to run with maximum concurrency, taking fu
 
 ### Adaptive concurrency
 
-The degree of parallelism is computed once at startup:
-
-```js
-const _CRYPTO_CONCURRENCY = Math.min(8, navigator.hardwareConcurrency || 4);
-```
-
-This serves as the default batch width for all bulk encrypt/decrypt loops. On an 8-core machine, up to 8 files are processed simultaneously.
+The degree of parallelism is computed once at startup based on `navigator.hardwareConcurrency`, capped at 8. This serves as the default batch width for all bulk encrypt/decrypt loops. On an 8-core machine, up to 8 files are processed simultaneously.
 
 <a id="bulk-upload"></a>
 
@@ -685,30 +713,30 @@ For each batch of files the application reads all `ArrayBuffer` payloads in para
 
 ### ZIP export
 
-Exporting files as an archive uses `DB.getFilesByIds()` — a single IndexedDB read transaction that fetches all required records concurrently via parallel `IDBObjectStore.get()` calls. Decryption of all records is then dispatched in one `Promise.allSettled` call rather than being serialised through fixed-size batches.
+Exporting files as an archive uses a single IndexedDB read transaction that fetches all required records concurrently. Decryption of all records is then dispatched in one parallel batch rather than being serialised sequentially.
 
 <a id="password-change"></a>
 
 ### Password change
 
-Re-encrypting a container under a new key dispatches all `decrypt → encrypt` pairs for every file **fully in parallel**. Results are accumulated and written back in a single `saveFiles()` batch, reducing total elapsed time from `O(n × sequential awaits)` to approximately one parallel round-trip plus one database write.
+Re-encrypting a container under a new key dispatches all decrypt–re-encrypt pairs for every file **fully in parallel**. Results are accumulated and written back in a single batch, reducing total elapsed time to approximately one parallel round-trip plus one database write.
 
 <a id="container-export"></a>
 
 ### Container export
 
-Exporting a `.safenova` file requires no single contiguous memory allocation regardless of container size. The builder receives each file blob as an individual `Uint8Array` chunk (no concatenation into a giant `workspaceBin`), computes CRC32 incrementally over the chunk list via `_crc32multi()`, and emits an **array of small output parts**. `downloadBuf()` passes that parts array directly to the `Blob` constructor — the browser stitches the pieces together internally without requiring a duplicate allocation. The peak RAM footprint for an N-gigabyte export is approximately N bytes (the data already held in IndexedDB), rather than the previous ~3× N that caused `Array buffer allocation failed` errors for 3 GB+ containers.
+Exporting a `.safenova` file requires no single contiguous memory allocation regardless of container size. The builder receives each file blob as an individual chunk (no concatenation into one giant buffer), computes CRC32 incrementally, and emits an **array of small output parts**. The parts array is passed directly to the `Blob` constructor — the browser stitches the pieces together internally without requiring a duplicate allocation. The peak RAM footprint for an N-gigabyte export is approximately N bytes (the data already held in IndexedDB), rather than ~3× N.
 
 <a id="drag-drop-performance"></a>
 
 ### Drag-and-drop performance (large folders)
 
-Icon dragging in folders with many files previously re-iterated all `VFS.children()` results on **every** `mousemove` / `touchmove` frame (~60 fps) to rebuild the occupied-cell map. With hundreds of files this became a measurable bottleneck. The hot path is now O(1) per frame:
+Icon dragging in folders with many files previously rebuilt the occupied-cell map on **every** mouse/touch frame (~60 fps). With hundreds of files this became a measurable bottleneck. The hot path is now O(1) per frame:
 
 -   **Touch drag** — the occupied map is built once at drag-start (when the 400 ms long-press fires) and reused throughout the gesture
--   **Mouse drag** — `srcOccupied` is built once at drag-start; `winOccCached` / `deskOccCached` are computed once when the pointer first enters a drop target, not on every frame
+-   **Mouse drag** — occupied maps are computed once at drag-start and once when the pointer first enters a drop target, not on every frame
 -   **Snap preview throttle** — snap-preview positions are recomputed only when the pointer crosses a grid cell boundary (96 px steps), not on every pixel movement
--   **No full map clone** — `_showPreviews` uses a small `extra` overlay Map (one entry per selected item) instead of cloning the full `occMap` on each call; `_snapFreeCell` accepts that overlay as an optional second map and checks both without merging them
+-   **No full map clone** — snap previews use a small overlay map (one entry per selected item) instead of cloning the full occupied map on each call
 
 ---
 
@@ -740,7 +768,7 @@ A short tap (< 350 ms) on an icon opens the context menu. A long press (≥ 400 
 
 ### Paste at finger position
 
-When **Paste** is triggered from the context menu on a touch device, the items are placed at the position where the menu was opened, rather than defaulting to the origin. The context screen position (`App._ctxScreenPos`) is captured when the menu action is confirmed, and each pasted item is placed via `_snapFreeCell` relative to that position.
+When **Paste** is triggered from the context menu on a touch device, the items are placed at the position where the menu was opened, rather than defaulting to the origin. The screen position is captured when the menu action is confirmed, and each pasted item is snapped to the nearest free grid cell relative to that position.
 
 <a id="mobile-overscroll"></a>
 

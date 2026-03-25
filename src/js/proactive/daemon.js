@@ -210,30 +210,282 @@
         (function () { try { return _reflectApply(_reTest, _nativeRe, ['' + Function.prototype.call]); } catch { return false; } }());
 
     /* ──────────────────────────────────────────────────────────
-       0d. Iframe-sourced console capture
-           MV2 extensions with run_at:document_start can wrap
-           console.error on the main window BEFORE daemon.js runs.
-           An about:blank iframe created programmatically gets a
-           fresh contentWindow with its own untouched console
-           instance — extensions only target the main window, not
-           child frames.  We grab .error, bind it, then immediately
-           remove the iframe from the DOM; the JS reference keeps
-           the context alive without leaving a visible DOM node.
-           Falls back to main-window console.error if CSP blocks
-           frame creation or the DOM is unavailable.
+       0d. Native restoration via about:blank iframe
+           MV2 extensions (run_at:document_start) can wrap or
+           replace globals and prototype methods on the main
+           window before daemon.js evaluates.  A programmatically-
+           created about:blank iframe has a completely fresh
+           contentWindow that extensions have never touched.
+           We restore as many security-critical natives as possible
+           from the iframe onto the main window, then immediately
+           remove the iframe from the DOM.  By the time section 1
+           builds _N, it sees the restored native references.
+
+           Restoration order matters:
+             1. Object / Reflect / Array / String / RegExp primitives
+                — restored first so all subsequent Object.defineProperty
+                  calls in this block use the native version.
+             2. Window-level globals (fetch, XHR, timers, URL, …)
+             3. Crypto — window.crypto is [Unforgeable]; methods are
+                restored via Object.defineProperty individually.
+             4. Prototype methods (XHR, EventTarget, Element, Node,
+                Document, Storage, IDB, Location, Navigator, …)
+             5. Console reference (for _N.consoleError)
+
+           Security: Document.prototype.createElement and
+           Node.prototype.appendChild/.removeChild are validated as
+           native via _isNative (from section 0) before use.
+           If any of them is tampered, _canUseIframe is false and
+           section 1b _captureClean checks will refuse boot.
        ────────────────────────────────────────────────────────── */
+    const _docCreateEl = Document.prototype.createElement;
+    const _nodeAppend  = Node.prototype.appendChild;
+    const _nodeRemove  = Node.prototype.removeChild;
+    // Verify the DOM creation primitives are native before trusting them.
+    const _canUseIframe = _isNative(_docCreateEl) && _isNative(_nodeAppend) && _isNative(_nodeRemove);
+
     let _ifrConsoleErr = null;
-    try {
-        const _ifr = document.createElement('iframe');
-        _ifr.style.cssText = 'display:none;width:0;height:0;position:absolute;left:-9999px;top:-9999px';
-        // document.body does not exist when <head> scripts run — use documentElement.
-        document.documentElement.appendChild(_ifr);
-        const _iwin = _ifr.contentWindow;
-        if (_iwin && typeof _iwin.console === 'object' && typeof _iwin.console.error === 'function') {
-            _ifrConsoleErr = _iwin.console.error.bind(_iwin.console);
-        }
-        document.documentElement.removeChild(_ifr);
-    } catch { /* frame-src CSP blocked or DOM unavailable — fall back to direct capture */ }
+
+    if (_canUseIframe) {
+        try {
+            const _ifr = _reflectApply(_docCreateEl, document, ['iframe']);
+            _ifr.style.cssText = 'display:none;width:0;height:0;position:absolute;left:-9999px;top:-9999px';
+            // document.body does not exist when <head> scripts run — use documentElement.
+            _reflectApply(_nodeAppend, document.documentElement, [_ifr]);
+            const _iwin = _ifr.contentWindow;
+
+            if (_iwin && typeof _iwin === 'object') {
+                // Restore target[prop] from iframe value, but only if the value is a
+                // native function — guards against a nested-poison iframe scenario.
+                // Uses simple assignment (not Object.defineProperty) to bypass any
+                // setter-level interception that may still be in place at call time.
+                const _rst = (target, prop, val) => {
+                    if (typeof val === 'function' && _isNative(val)) {
+                        try { target[prop] = val; } catch { }
+                    }
+                };
+
+                // ── 1. Core language primitives ───────────────────────
+                // Restore Object.defineProperty first — all subsequent descriptor-
+                // based restorations (innerHTML, href, storage.length, …) will then
+                // call the native version.
+                if (_iwin.Object) {
+                    _rst(Object, 'defineProperty',            _iwin.Object.defineProperty);
+                    _rst(Object, 'getOwnPropertyDescriptor',  _iwin.Object.getOwnPropertyDescriptor);
+                    _rst(Object, 'getOwnPropertyDescriptors', _iwin.Object.getOwnPropertyDescriptors);
+                    _rst(Object, 'freeze',                    _iwin.Object.freeze);
+                    _rst(Object, 'keys',                      _iwin.Object.keys);
+                    _rst(Object, 'assign',                    _iwin.Object.assign);
+                }
+                if (_iwin.Reflect) {
+                    _rst(Reflect, 'apply',          _iwin.Reflect.apply);
+                    _rst(Reflect, 'construct',      _iwin.Reflect.construct);
+                    _rst(Reflect, 'defineProperty', _iwin.Reflect.defineProperty);
+                    _rst(Reflect, 'ownKeys',        _iwin.Reflect.ownKeys);
+                }
+                if (_iwin.RegExp) _rst(RegExp.prototype, 'test', _iwin.RegExp.prototype.test);
+                if (_iwin.Array) {
+                    _rst(Array.prototype, 'push',  _iwin.Array.prototype.push);
+                    _rst(Array.prototype, 'slice', _iwin.Array.prototype.slice);
+                    _rst(Array, 'from',            _iwin.Array.from);
+                    _rst(Array, 'isArray',         _iwin.Array.isArray);
+                }
+                if (_iwin.String) {
+                    _rst(String.prototype, 'slice',       _iwin.String.prototype.slice);
+                    _rst(String.prototype, 'indexOf',     _iwin.String.prototype.indexOf);
+                    _rst(String.prototype, 'toLowerCase', _iwin.String.prototype.toLowerCase);
+                }
+
+                // ── 2. Window-level globals ───────────────────────────
+                _rst(window, 'fetch',                 _iwin.fetch);
+                _rst(window, 'XMLHttpRequest',        _iwin.XMLHttpRequest);
+                _rst(window, 'WebSocket',             _iwin.WebSocket);
+                _rst(window, 'EventSource',           _iwin.EventSource);
+                _rst(window, 'Worker',                _iwin.Worker);
+                _rst(window, 'MutationObserver',      _iwin.MutationObserver);
+                _rst(window, 'CustomEvent',           _iwin.CustomEvent);
+                // URL and Blob constructors are intentionally NOT restored from
+                // the iframe.  After iframe DOM removal the browsing context is
+                // destroyed; constructors and static methods that depend on the
+                // originating realm (Blob storage, blob-URL registry) produce
+                // objects in a dead context — URL.createObjectURL returns URLs
+                // the browser cannot serve, causing downloads to fall back to
+                // the current HTML page (same class of bug as the crypto .bind()
+                // hang).  The daemon still captures these in _N and validates
+                // nativity every watchdog tick; pre-load tampering is detected
+                // at boot and the app refuses to start.
+                // _rst(window, 'URL',  _iwin.URL);
+                // _rst(window, 'Blob', _iwin.Blob);
+                _rst(window, 'Uint8Array',            _iwin.Uint8Array);
+                _rst(window, 'ArrayBuffer',           _iwin.ArrayBuffer);
+                _rst(window, 'DataView',              _iwin.DataView);
+                _rst(window, 'TextEncoder',           _iwin.TextEncoder);
+                _rst(window, 'TextDecoder',           _iwin.TextDecoder);
+                _rst(window, 'btoa',                  _iwin.btoa);
+                _rst(window, 'atob',                  _iwin.atob);
+                _rst(window, 'setTimeout',            _iwin.setTimeout);
+                _rst(window, 'clearTimeout',          _iwin.clearTimeout);
+                _rst(window, 'setInterval',           _iwin.setInterval);
+                _rst(window, 'clearInterval',         _iwin.clearInterval);
+                _rst(window, 'requestAnimationFrame', _iwin.requestAnimationFrame);
+                _rst(window, 'cancelAnimationFrame',  _iwin.cancelAnimationFrame);
+                // eval / Function — restored to native here; E15/E16 hooks block them later
+                _rst(window, 'eval',     _iwin.eval);
+                _rst(window, 'Function', _iwin.Function);
+                if (_iwin.SharedWorker)        _rst(window, 'SharedWorker',        _iwin.SharedWorker);
+                if (_iwin.CompressionStream)   _rst(window, 'CompressionStream',   _iwin.CompressionStream);
+                if (_iwin.DecompressionStream) _rst(window, 'DecompressionStream', _iwin.DecompressionStream);
+
+                // ── 3. Crypto ─────────────────────────────────────────
+                // window.crypto is [Unforgeable] — cannot be replaced as a whole.
+                // Restore getRandomValues and all SubtleCrypto methods individually.
+                const _iCrypto = _iwin.crypto;
+                if (_iCrypto && typeof _iCrypto === 'object' && window.crypto) {
+                    if (typeof _iCrypto.getRandomValues === 'function' && _isNative(_iCrypto.getRandomValues)) {
+                        try {
+                            Object.defineProperty(window.crypto, 'getRandomValues', {
+                                value: _iCrypto.getRandomValues,
+                                writable: true, configurable: true, enumerable: true
+                            });
+                        } catch { }
+                    }
+                    const _iSubtle = _iCrypto.subtle;
+                    if (_iSubtle && typeof _iSubtle === 'object' && window.crypto.subtle) {
+                        const _sM = ['encrypt', 'decrypt', 'importKey', 'exportKey',
+                                     'deriveKey', 'deriveBits', 'digest', 'sign',
+                                     'verify', 'generateKey', 'wrapKey', 'unwrapKey'];
+                        for (let _si = 0; _si < _sM.length; _si++) {
+                            const _sv = _iSubtle[_sM[_si]];
+                            if (typeof _sv === 'function' && _isNative(_sv)) {
+                                try {
+                                    Object.defineProperty(window.crypto.subtle, _sM[_si], {
+                                        value: _sv,
+                                        writable: true, configurable: true, enumerable: true
+                                    });
+                                } catch { }
+                            }
+                        }
+                    }
+                }
+
+                // ── 4. XHR prototype ──────────────────────────────────
+                if (_iwin.XMLHttpRequest) {
+                    const _iXP = _iwin.XMLHttpRequest.prototype;
+                    _rst(XMLHttpRequest.prototype, 'open', _iXP.open);
+                    _rst(XMLHttpRequest.prototype, 'send', _iXP.send);
+                }
+
+                // ── 5. EventTarget prototype ──────────────────────────
+                if (_iwin.EventTarget) {
+                    const _iETP = _iwin.EventTarget.prototype;
+                    _rst(EventTarget.prototype, 'addEventListener',    _iETP.addEventListener);
+                    _rst(EventTarget.prototype, 'dispatchEvent',       _iETP.dispatchEvent);
+                    _rst(EventTarget.prototype, 'removeEventListener', _iETP.removeEventListener);
+                }
+
+                // ── 6. Element / Node / Document prototypes ───────────
+                if (_iwin.Element) {
+                    const _iElP = _iwin.Element.prototype;
+                    _rst(Element.prototype, 'setAttribute',       _iElP.setAttribute);
+                    _rst(Element.prototype, 'getAttribute',       _iElP.getAttribute);
+                    _rst(Element.prototype, 'removeAttribute',    _iElP.removeAttribute);
+                    _rst(Element.prototype, 'insertAdjacentHTML', _iElP.insertAdjacentHTML);
+                    _rst(Element.prototype, 'querySelector',      _iElP.querySelector);
+                    _rst(Element.prototype, 'querySelectorAll',   _iElP.querySelectorAll);
+                    _rst(Element.prototype, 'animate',            _iElP.animate);
+                    // innerHTML / outerHTML are accessor descriptors — require defineProperty
+                    const _iInD = Object.getOwnPropertyDescriptor(_iwin.Element.prototype, 'innerHTML');
+                    const _iOuD = Object.getOwnPropertyDescriptor(_iwin.Element.prototype, 'outerHTML');
+                    if (_iInD && typeof _iInD.set === 'function') {
+                        try { Object.defineProperty(Element.prototype, 'innerHTML', _iInD); } catch { }
+                    }
+                    if (_iOuD && typeof _iOuD.set === 'function') {
+                        try { Object.defineProperty(Element.prototype, 'outerHTML', _iOuD); } catch { }
+                    }
+                }
+                if (_iwin.Node) {
+                    const _iNP = _iwin.Node.prototype;
+                    _rst(Node.prototype, 'appendChild',  _iNP.appendChild);
+                    _rst(Node.prototype, 'removeChild',  _iNP.removeChild);
+                    _rst(Node.prototype, 'insertBefore', _iNP.insertBefore);
+                }
+                if (_iwin.Document) {
+                    const _iDP = _iwin.Document.prototype;
+                    _rst(Document.prototype, 'createElement',    _iDP.createElement);
+                    _rst(Document.prototype, 'getElementById',   _iDP.getElementById);
+                    _rst(Document.prototype, 'querySelector',    _iDP.querySelector);
+                    _rst(Document.prototype, 'querySelectorAll', _iDP.querySelectorAll);
+                    if (_iDP.write)   _rst(Document.prototype, 'write',   _iDP.write);
+                    if (_iDP.writeln) _rst(Document.prototype, 'writeln', _iDP.writeln);
+                }
+
+                // ── 7. Storage prototype ──────────────────────────────
+                if (_iwin.Storage) {
+                    const _iSP = _iwin.Storage.prototype;
+                    _rst(Storage.prototype, 'getItem',    _iSP.getItem);
+                    _rst(Storage.prototype, 'setItem',    _iSP.setItem);
+                    _rst(Storage.prototype, 'removeItem', _iSP.removeItem);
+                    _rst(Storage.prototype, 'clear',      _iSP.clear);
+                    _rst(Storage.prototype, 'key',        _iSP.key);
+                    const _iLD = Object.getOwnPropertyDescriptor(_iwin.Storage.prototype, 'length');
+                    if (_iLD && typeof _iLD.get === 'function') {
+                        try { Object.defineProperty(Storage.prototype, 'length', _iLD); } catch { }
+                    }
+                }
+
+                // ── 8. IDBFactory prototype ───────────────────────────
+                if (_iwin.IDBFactory) {
+                    _rst(IDBFactory.prototype, 'open', _iwin.IDBFactory.prototype.open);
+                }
+
+                // ── 9. HTMLFormElement / Location / Navigator ─────────
+                if (_iwin.HTMLFormElement) {
+                    _rst(HTMLFormElement.prototype, 'submit', _iwin.HTMLFormElement.prototype.submit);
+                }
+                if (_iwin.Location) {
+                    const _iLP = _iwin.Location.prototype;
+                    if (typeof _iLP.assign  === 'function') _rst(Location.prototype, 'assign',  _iLP.assign);
+                    if (typeof _iLP.replace === 'function') _rst(Location.prototype, 'replace', _iLP.replace);
+                    const _iHD = Object.getOwnPropertyDescriptor(_iwin.Location.prototype, 'href');
+                    if (_iHD && typeof _iHD.set === 'function') {
+                        try { Object.defineProperty(Location.prototype, 'href', _iHD); } catch { }
+                    }
+                }
+                if (_iwin.Navigator && typeof _iwin.Navigator.prototype.sendBeacon === 'function') {
+                    _rst(Navigator.prototype, 'sendBeacon', _iwin.Navigator.prototype.sendBeacon);
+                }
+
+                // ── 10. Typed array prototype methods ─────────────────
+                if (_iwin.Uint8Array) {
+                    const _iU8P = _iwin.Uint8Array.prototype;
+                    _rst(Uint8Array.prototype, 'set',      _iU8P.set);
+                    _rst(Uint8Array.prototype, 'subarray', _iU8P.subarray);
+                    _rst(Uint8Array.prototype, 'slice',    _iU8P.slice);
+                }
+                if (_iwin.ArrayBuffer) {
+                    _rst(ArrayBuffer.prototype, 'slice', _iwin.ArrayBuffer.prototype.slice);
+                }
+
+                // ── 11. URL static methods ────────────────────────────
+                // createObjectURL / revokeObjectURL are NOT restored for the
+                // same reason as URL and Blob above: calling static methods
+                // whose [[Realm]] is the destroyed iframe produces blob URLs
+                // that cannot be served by the browser.
+                // if (_iwin.URL) {
+                //     _rst(URL, 'createObjectURL', _iwin.URL.createObjectURL);
+                //     _rst(URL, 'revokeObjectURL', _iwin.URL.revokeObjectURL);
+                // }
+
+                // ── 12. Console (for _N.consoleError) ─────────────────
+                if (_iwin.console && typeof _iwin.console.error === 'function') {
+                    _ifrConsoleErr = _iwin.console.error.bind(_iwin.console);
+                }
+            }
+
+            // Remove iframe from DOM — JS references remain valid, node is gone
+            _reflectApply(_nodeRemove, document.documentElement, [_ifr]);
+        } catch { /* frame-src CSP blocked, DOM unavailable — fall back to direct captures */ }
+    }
 
     /* ──────────────────────────────────────────────────────────
        1.  Lock in native references
@@ -910,8 +1162,14 @@
     function _isExternal(urlStr) {
         if (!urlStr) return false;
         try {
-            // Relative URLs always resolve to same origin
-            const parsed = new _N.URL('' + urlStr, window.location.href);
+            const s = '' + urlStr;
+            // data: URLs are inline resources (canvas thumbnails, etc.) — always safe
+            if (s.charCodeAt(0) === 100 && s.startsWith('data:')) return false;
+            const parsed = new _N.URL(s, window.location.href);
+            const proto = parsed.protocol;
+            // Browser-extension resources are injected by user-installed extensions
+            if (proto === 'chrome-extension:' || proto === 'moz-extension:'
+                || proto === 'safari-web-extension:') return false;
             return parsed.origin !== _origin;
         } catch {
             return false; // malformed URL — let the browser handle it
@@ -1115,7 +1373,7 @@
     function _hookResourceProp(proto, propName, origDesc, hKey, label, noAlert) {
         if (!origDesc || !origDesc.set) return;
         if (!_H[hKey]) {
-            _H[hKey] = noAlert
+            const _impl = noAlert
                 ? function (val) {
                     if (_isExternal('' + (val ?? ''))) {
                         _logBlockedToConsole(label + ' blocked \u2192 ' + val);
@@ -1129,6 +1387,7 @@
                     }
                     _reflectApply(origDesc.set, this, [val]);
                 };
+            _H[hKey] = _mkProxy(_impl, 'snv_' + hKey);
         }
         Object.defineProperty(proto, propName, {
             configurable: true, enumerable: true,
@@ -1452,37 +1711,88 @@
         } catch { }
     }
 
-    // ── Publicly visible hooks (thin forwarders only) ──────────
+    // ── _mkProxy: opaque hook factory ──────────────────────────
+    // Creates a thin forwarder whose toString() reveals only:
+    //   "function () { return _reflectApply(_p, this, arguments); }"
+    // All security logic lives in the closure-private impl (_p).
+    // Uses _reflectApply (captured Reflect.apply) — immune to
+    // Function.prototype.apply replacement.
+    //   impl:  closure-private implementation function
+    //   name:  cosmetic .name for console display (e.g. 'snvFetch')
+    //   proto: optional .prototype to copy (constructor proxies)
+    const _mkProxy = function (impl, name, proto) {
+        const _p = impl;
+        const _fn = function () { return _reflectApply(_p, this, arguments); };
+        if (name) try { Object.defineProperty(_fn, 'name', { value: name, configurable: true }); } catch {}
+        if (proto !== void 0) try { _fn.prototype = proto; } catch {}
+        return _fn;
+    };
+
+    // ── Constructor hook impl factory (Worker, SharedWorker, EventSource) ──
+    // Eliminates duplication between identical constructor hooks.
+    //   nativeCtor: captured native constructor
+    //   label:      display name for alerts (e.g. 'Worker')
+    //   blockData:  if truthy, also block data: URL scripts
+    function _mkCtorImpl(nativeCtor, label, blockData) {
+        return function () {
+            const urlStr = '' + (arguments[0] ?? '');
+            if (blockData && urlStr.indexOf('data:') === 0) {
+                _triggerAlert(label + ' with data: URL blocked');
+                throw new Error('[SafeNova Proactive] ' + label + ' data: URL blocked');
+            }
+            if (_isExternal(urlStr)) {
+                _triggerAlert(label + ' to external URL blocked \u2192 ' + urlStr);
+                throw new Error('[SafeNova Proactive] External ' + label + ' blocked');
+            }
+            return arguments.length >= 2
+                ? new nativeCtor(arguments[0], arguments[1])
+                : new nativeCtor(arguments[0]);
+        };
+    }
+
+    // ── Timer string-guard impl factory (setTimeout, setInterval) ──
+    function _mkTimerImpl(nativeFn, label) {
+        return function (fn) {
+            if (typeof fn === 'string') {
+                _triggerAlert(label + ' with string callback blocked');
+                return 0;
+            }
+            return _reflectApply(nativeFn, window, arguments);
+        };
+    }
+
+    // ── Publicly visible hooks (thin forwarders via _mkProxy) ──
     const _H = {}; // live hook references — checked every tick
 
     function _installHooks() {
-        // toString() on each of these shows only the one-liner forwarder.
-        // The actual check logic inside _*Impl is unreachable from outside.
-        _H.fetch = function snvFetch() { return _fetchImpl.apply(this, arguments); };
+        // All hooks use _mkProxy — toString() on each shows only the
+        // thin forwarder body, not the security logic in the impl closure.
+
+        _H.fetch = _mkProxy(_fetchImpl, 'snvFetch');
         window.fetch = _H.fetch;
 
-        _H.xhrOpen = function snvXhrOpen() { return _xhrOpenImpl.apply(this, arguments); };
+        _H.xhrOpen = _mkProxy(_xhrOpenImpl, 'snvXhrOpen');
         XMLHttpRequest.prototype.open = _H.xhrOpen;
 
         if (_N.sendBeacon) {
-            _H.sendBeacon = function snvSendBeacon() { return _sendBeaconImpl.apply(this, arguments); };
+            _H.sendBeacon = _mkProxy(_sendBeaconImpl, 'snvSendBeacon');
             navigator.sendBeacon = _H.sendBeacon;
         }
 
         // ── D2: DOM exfiltration hooks ──────────────────────────
 
-        _H.setAttribute = function snvSetAttribute() { return _setAttributeImpl.apply(this, arguments); };
+        _H.setAttribute = _mkProxy(_setAttributeImpl, 'snvSetAttribute');
         Element.prototype.setAttribute = _H.setAttribute;
 
         if (_innerHTMLSetImpl) {
-            _H.innerHTMLSet = _innerHTMLSetImpl;
+            _H.innerHTMLSet = _mkProxy(_innerHTMLSetImpl, 'snvInnerHTMLSet');
             Object.defineProperty(Element.prototype, 'innerHTML', {
                 configurable: true, enumerable: true,
                 get: _N.innerHTMLDesc.get, set: _H.innerHTMLSet
             });
         }
         if (_outerHTMLSetImpl) {
-            _H.outerHTMLSet = _outerHTMLSetImpl;
+            _H.outerHTMLSet = _mkProxy(_outerHTMLSetImpl, 'snvOuterHTMLSet');
             Object.defineProperty(Element.prototype, 'outerHTML', {
                 configurable: true, enumerable: true,
                 get: _N.outerHTMLDesc.get, set: _H.outerHTMLSet
@@ -1490,41 +1800,41 @@
         }
 
         if (_N.insertAdjacentHTML) {
-            _H.insertAdjacentHTML = function snvInsertAdjacentHTML() { return _insertAdjacentHTMLImpl.apply(this, arguments); };
+            _H.insertAdjacentHTML = _mkProxy(_insertAdjacentHTMLImpl, 'snvInsertAdjacentHTML');
             Element.prototype.insertAdjacentHTML = _H.insertAdjacentHTML;
         }
         if (_N.docWrite) {
-            _H.docWrite = function snvDocWrite() { return _docWriteImpl.apply(this, arguments); };
+            _H.docWrite = _mkProxy(_docWriteImpl, 'snvDocWrite');
             Document.prototype.write = _H.docWrite;
         }
         if (_N.docWriteln) {
-            _H.docWriteln = function snvDocWriteln() { return _docWritelnImpl.apply(this, arguments); };
+            _H.docWriteln = _mkProxy(_docWritelnImpl, 'snvDocWriteln');
             Document.prototype.writeln = _H.docWriteln;
         }
 
         if (_N.locAssign) {
             try {
-                const _fn = function snvLocAssign() { return _locAssignImpl.apply(this, arguments); };
-                Location.prototype.assign = _fn; _H.locAssign = _fn;
+                _H.locAssign = _mkProxy(_locAssignImpl, 'snvLocAssign');
+                Location.prototype.assign = _H.locAssign;
             } catch { /* Location.prototype.assign non-configurable */ }
         }
         if (_N.locReplace) {
             try {
-                const _fn = function snvLocReplace() { return _locReplaceImpl.apply(this, arguments); };
-                Location.prototype.replace = _fn; _H.locReplace = _fn;
+                _H.locReplace = _mkProxy(_locReplaceImpl, 'snvLocReplace');
+                Location.prototype.replace = _H.locReplace;
             } catch { /* Location.prototype.replace non-configurable */ }
         }
         if (_locHrefSetImpl && _N.locHrefDesc) {
             try {
+                _H.locHrefSet = _mkProxy(_locHrefSetImpl, 'snvLocHrefSet');
                 Object.defineProperty(Location.prototype, 'href', {
                     configurable: true, enumerable: true,
-                    get: _N.locHrefDesc.get, set: _locHrefSetImpl
+                    get: _N.locHrefDesc.get, set: _H.locHrefSet
                 });
-                _H.locHrefSet = _locHrefSetImpl;
             } catch { /* Location.prototype.href non-configurable */ }
         }
 
-        _H.formSubmit = function snvFormSubmit() { return _formSubmitImpl.apply(this, arguments); };
+        _H.formSubmit = _mkProxy(_formSubmitImpl, 'snvFormSubmit');
         HTMLFormElement.prototype.submit = _H.formSubmit;
 
         _hookResourceProp(HTMLImageElement.prototype, 'src', _N.imgSrcDesc, 'imgSrcSet', 'img.src');
@@ -1775,22 +2085,25 @@
     //    If external code tries to clear our watchdog timer IDs,
     //    silently ignore the call. Legitimate code never targets
     //    foreign timer IDs.
-    window.clearInterval = function snvClearInterval(id) {
+    const _clearIntervalImpl = function (id) {
         if (id in _watchdogIds || id in _trapIds) return; // SET-1/2: `in` operator
         return _N._clearInterval.call(window, id);
     };
-    window.clearTimeout = function snvClearTimeout(id) {
-        if (id in _watchdogIds) return; // SET-1: `in` operator
+    window.clearInterval = _mkProxy(_clearIntervalImpl, 'snvClearInterval');
+    const _clearTimeoutImpl = function (id) {
+        if (id in _watchdogIds || id in _trapIds) return; // SET-1/2: protect both watchdog and debugger-trap IDs
         return _N._clearTimeout.call(window, id);
     };
+    window.clearTimeout = _mkProxy(_clearTimeoutImpl, 'snvClearTimeout');
 
     // ── E4: Guard cancelAnimationFrame ─────────────────────────
     //    Silently ignore attempts to cancel our rAF chain ID.
     if (_N._cancelAnimationFrame) {
-        window.cancelAnimationFrame = function snvCancelAnimationFrame(id) {
+        const _cancelRAFImpl = function (id) {
             if (_rafId !== null && id === _rafId) return;
             return _N._cancelAnimationFrame.call(window, id);
         };
+        window.cancelAnimationFrame = _mkProxy(_cancelRAFImpl, 'snvCancelAnimationFrame');
     }
 
     // ── E6: WebSocket hook ──────────────────────────────
@@ -1799,7 +2112,7 @@
     //    is blocked and triggers a threat alert.
     const _NativeWebSocket = window.WebSocket;
     if (_NativeWebSocket && _isNative(_NativeWebSocket)) {
-        window.WebSocket = function snvWebSocket(url) {
+        const _wsImpl = function (url) {
             const urlStr = '' + (url ?? ''); // STR-2: concatenation op, no String() call
             const isSameOrigin = (function () {
                 try {
@@ -1820,7 +2133,7 @@
                 ? new _NativeWebSocket(arguments[0], arguments[1])
                 : new _NativeWebSocket(arguments[0]);
         };
-        try { window.WebSocket.prototype = _NativeWebSocket.prototype; } catch { }
+        window.WebSocket = _mkProxy(_wsImpl, 'snvWebSocket', _NativeWebSocket.prototype);
     }
 
     // ── E11: window.open — popup / navigation exfiltration ─────
@@ -1829,14 +2142,15 @@
     //    Same-origin opens (popups, _blank same-site) pass through.
     const _NativeWindowOpen = window.open;
     if (_NativeWindowOpen && _isNative(_NativeWindowOpen)) {
-        window.open = function snvWindowOpen(url) {
+        const _woImpl = function (url) {
             const urlStr = '' + (url ?? '');
             if (urlStr && _isExternal(urlStr)) {
                 _triggerAlert('window.open to external URL blocked \u2192 ' + urlStr);
                 return null;
             }
-            return _NativeWindowOpen.apply(window, arguments);
+            return _reflectApply(_NativeWindowOpen, window, arguments);
         };
+        window.open = _mkProxy(_woImpl, 'snvWindowOpen');
     }
 
     // ── E12: EventSource — SSE-based exfiltration ───────────────
@@ -1844,16 +2158,7 @@
     //    persistent HTTP GET connection to an external server.
     const _NativeEventSource = window.EventSource;
     if (_NativeEventSource && _isNative(_NativeEventSource)) {
-        window.EventSource = function snvEventSource(url) {
-            if (_isExternal('' + (url ?? ''))) {
-                _triggerAlert('EventSource to external URL blocked \u2192 ' + url);
-                throw new Error('[SafeNova Proactive] External EventSource blocked');
-            }
-            return arguments.length >= 2
-                ? new _NativeEventSource(arguments[0], arguments[1])
-                : new _NativeEventSource(arguments[0]);
-        };
-        try { window.EventSource.prototype = _NativeEventSource.prototype; } catch { }
+        window.EventSource = _mkProxy(_mkCtorImpl(_NativeEventSource, 'EventSource'), 'snvEventSource', _NativeEventSource.prototype);
     }
 
     // ── E13: Worker / SharedWorker — worker-based exfiltration ──
@@ -1862,40 +2167,30 @@
     //    data: URLs inline hostile code; external URLs pull it.
     const _NativeWorker = window.Worker;
     if (_NativeWorker && _isNative(_NativeWorker)) {
-        window.Worker = function snvWorker(scriptURL) {
-            const urlStr = '' + (scriptURL ?? '');
-            if (urlStr.indexOf('data:') === 0) {
-                _triggerAlert('Worker with data: URL blocked');
-                throw new Error('[SafeNova Proactive] Worker data: URL blocked');
-            }
-            if (_isExternal(urlStr)) {
-                _triggerAlert('Worker to external URL blocked \u2192 ' + urlStr);
-                throw new Error('[SafeNova Proactive] External Worker blocked');
-            }
-            return arguments.length >= 2
-                ? new _NativeWorker(arguments[0], arguments[1])
-                : new _NativeWorker(arguments[0]);
-        };
-        try { window.Worker.prototype = _NativeWorker.prototype; } catch { }
+        window.Worker = _mkProxy(_mkCtorImpl(_NativeWorker, 'Worker', true), 'snvWorker', _NativeWorker.prototype);
     }
     const _NativeSharedWorker = window.SharedWorker;
     if (_NativeSharedWorker && _isNative(_NativeSharedWorker)) {
-        window.SharedWorker = function snvSharedWorker(scriptURL) {
-            const urlStr = '' + (scriptURL ?? '');
-            if (urlStr.indexOf('data:') === 0) {
-                _triggerAlert('SharedWorker with data: URL blocked');
-                throw new Error('[SafeNova Proactive] SharedWorker data: URL blocked');
-            }
-            if (_isExternal(urlStr)) {
-                _triggerAlert('SharedWorker to external URL blocked \u2192 ' + urlStr);
-                throw new Error('[SafeNova Proactive] External SharedWorker blocked');
-            }
-            return arguments.length >= 2
-                ? new _NativeSharedWorker(arguments[0], arguments[1])
-                : new _NativeSharedWorker(arguments[0]);
-        };
-        try { window.SharedWorker.prototype = _NativeSharedWorker.prototype; } catch { }
+        window.SharedWorker = _mkProxy(_mkCtorImpl(_NativeSharedWorker, 'SharedWorker', true), 'snvSharedWorker', _NativeSharedWorker.prototype);
     }
+
+    // ── E13b: ServiceWorker registration — preventive block ─────
+    //    A rogue SW can intercept all fetches on next page load,
+    //    injecting code BEFORE daemon.js runs.  SafeNova does not
+    //    use ServiceWorkers.  Block register() preventively.
+    //    Existing SWs are nuked reactively in _nukeCachesAndWorkers.
+    try {
+        const _swcProto = navigator && navigator.serviceWorker
+            && Object.getPrototypeOf(navigator.serviceWorker);
+        if (_swcProto && typeof _swcProto.register === 'function') {
+            const _nativeSwRegister = _swcProto.register;
+            _swcProto.register = _mkProxy(function () {
+                _triggerAlert('ServiceWorker registration blocked');
+                return Promise.reject(
+                    new Error('[SafeNova Proactive] ServiceWorker registration blocked'));
+            }, 'snvSwRegister');
+        }
+    } catch { /* serviceWorker unavailable */ }
 
     // ── E14: setTimeout / setInterval string-callback guard ─────
     //    setTimeout('malicious code', n) / setInterval('...', n) are
@@ -1903,20 +2198,8 @@
     //    String callbacks are blocked unconditionally.
     //    Daemon's own timers use _N._setTimeout/_N._setInterval
     //    directly, bypassing this hook.
-    window.setTimeout = function snvSetTimeout(fn) {
-        if (typeof fn === 'string') {
-            _triggerAlert('setTimeout with string callback blocked');
-            return 0;
-        }
-        return _N._setTimeout.apply(window, arguments);
-    };
-    window.setInterval = function snvSetInterval(fn) {
-        if (typeof fn === 'string') {
-            _triggerAlert('setInterval with string callback blocked');
-            return 0;
-        }
-        return _N._setInterval.apply(window, arguments);
-    };
+    window.setTimeout = _mkProxy(_mkTimerImpl(_N._setTimeout, 'setTimeout'), 'snvSetTimeout');
+    window.setInterval = _mkProxy(_mkTimerImpl(_N._setInterval, 'setInterval'), 'snvSetInterval');
 
     // ── E15: window.eval — indirect eval block ──────────────────
     //    Direct eval('...') in strict-mode code cannot be overridden.
@@ -1924,10 +2207,11 @@
     //    overridable — this is the attack path from DevTools console.
     //    SafeNova uses zero eval in its codebase — block all.
     if (window.eval && _isNative(window.eval)) {
-        const _snvEval = function snvEval() {
+        const _evalImpl = function () {
             _triggerAlert('eval() blocked \u2192 dynamic code injection detected');
             throw new Error('[SafeNova Proactive] eval() blocked');
         };
+        const _snvEval = _mkProxy(_evalImpl, 'snvEval');
         try {
             // configurable:false prevents delete window.eval restoring native
             Object.defineProperty(window, 'eval', {
@@ -1938,18 +2222,21 @@
 
     // ── E16: new Function() constructor — string-to-code block ──
     //    new Function('return evil()') is a second eval-equivalent.
-    //    Blocked when called as a constructor (new.target is set).
-    //    Plain calls (typeof checks, internal framework usage) pass through.
+    //    Blocked ONLY when called as a constructor (new.target is set).
+    //    Plain calls without new: Function.prototype.toString, feature
+    //    detection, and various browser extensions call Function() or
+    //    Function.prototype.bind() etc. legitimately — these must pass.
+    //    Per spec §10.2.1 the only dangerous path is `new Function(src)`.
     const _NativeFunctionCtor = window.Function;
     if (_NativeFunctionCtor && _isNative(_NativeFunctionCtor)) {
-        const _snvFunction = function snvFunction() {
+        const _fnCtorImpl = function () {
             if (new.target) {
                 _triggerAlert('new Function() blocked \u2192 dynamic code injection detected');
                 throw new Error('[SafeNova Proactive] new Function() blocked');
             }
-            return _NativeFunctionCtor.apply(this, arguments);
+            return _reflectApply(_NativeFunctionCtor, this, arguments);
         };
-        try { _snvFunction.prototype = _NativeFunctionCtor.prototype; } catch { }
+        const _snvFunction = _mkProxy(_fnCtorImpl, 'snvFunction', _NativeFunctionCtor.prototype);
         try {
             Object.defineProperty(window, 'Function', {
                 configurable: false, enumerable: true, writable: false, value: _snvFunction
