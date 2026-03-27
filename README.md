@@ -128,7 +128,7 @@ No external installs needed — it uses the Windows built-in `HttpListener`.
 -   **Session memory** — optionally remember your session per tab (ephemeral, recommended) or persistently until manually signed out, using AES-GCM-encrypted session tokens; persistent sessions survive browser restarts
 -   **Cross-tab session protection** — a container can only be actively open in one browser tab at a time; a lightweight lock protocol detects conflicts and offers instant session takeover
 -   **Container import / export** — portable `.safenova` container files; import reads the archive via streaming `File.slice()` without loading the full file into memory, making multi-gigabyte imports possible; export streams data chunk-by-chunk requiring no single contiguous allocation regardless of container size
--   **Export password guard** — configurable setting (on by default) to require password confirmation before exporting; when disabled, the container key is taken directly from the active session if one is open; if no session is present, a pre-generated encrypted export cache stored in IndexedDB is used — the cache payload is deflate-compressed before encryption, reducing its IDB footprint significantly for containers with many files; the compressed bytes are then wrapped with a per-container HKDF-SHA-256 derived key (AES-256-GCM), making the cache browser-independent; if the cache is absent or stale (file count or sizes changed), the context menu shows a red dot and falls back to a password prompt — after a successful password-prompted export the cache is rebuilt automatically so subsequent exports require no password; the cache is invalidated on password change or settings re-enable
+-   **Export password guard** — configurable setting (on by default) to require password confirmation before exporting; when disabled, the container key is taken directly from the active session if one is open; if no session is present, a pre-generated encrypted export cache stored in IDB is used — the cache payload is deflate-compressed before encryption, reducing its IDB footprint significantly for containers with many files; the compressed bytes are then wrapped with a per-container HKDF-SHA-256 derived key (AES-256-GCM), making the cache browser-independent; if the cache is absent or stale (file count or sizes changed), the context menu shows a red dot and falls back to a password prompt — after a successful password-prompted export the cache is rebuilt automatically so subsequent exports require no password; the cache is invalidated on password change or settings re-enable
 -   **Quick export button** — dedicated **Export** button in the desktop toolbar provides one-click passwordless export when the export password guard is disabled
 -   **Sort & arrange** — sort icons by name, date, size, or type; drag to custom positions
 -   **Secure container deletion** — before permanent erasure, every encrypted blob is cryptographically pre-shredded: inline files have random bytes XOR-flipped (position and delta are unknown and unlogged); large chunked files have their AES-GCM IV zeroed, making decryption unconditionally impossible and the operation maximally fast; heavy internal blobs (deferred workspace data, export cache, audit log) are explicitly nullified before the record is deleted so that the browser immediately releases persistent storage and the freed space is reflected without waiting for lazy garbage collection
@@ -218,7 +218,7 @@ Legend: ✅ Advantage / works well &nbsp;·&nbsp; ❌ Disadvantage / not support
 </tr>
 <tr>
 <td align="left"><b>File stealer protection</b></td>
-<td align="left">✅ Encrypted in IndexedDB; never plaintext on disk</td>
+<td align="left">✅ Encrypted in IDB; never plaintext on disk</td>
 <td align="left">❌ Mounted volume exposes all files to every process</td>
 <td align="left">❌ Once unlocked, all files accessible to all processes</td>
 <td align="left">🟡 Encrypted on disk; plaintext only in the virtual drive while open</td>
@@ -267,7 +267,7 @@ Legend: ✅ Advantage / works well &nbsp;·&nbsp; ❌ Disadvantage / not support
 </tr>
 <tr>
 <td align="left"><b>Data deletion</b></td>
-<td align="left">✅ Blob shredding + full IndexedDB purge on delete</td>
+<td align="left">✅ Blob shredding + full IDB purge on delete</td>
 <td align="left">🟡 Delete the file; OS journaling may retain fragments</td>
 <td align="left">❌ Decryption leaves files; separate secure-erase needed</td>
 <td align="left">🟡 Delete the vault; journaling applies; cloud may retain versions</td>
@@ -295,7 +295,7 @@ Legend: ✅ Advantage / works well &nbsp;·&nbsp; ❌ Disadvantage / not support
 </tr>
 <tr>
 <td align="left"><b>Storage size</b></td>
-<td align="left">❌ Max 8 GB per container; IndexedDB quota applies; not for large or industrial-scale data</td>
+<td align="left">❌ Max 8 GB per container; IDB quota applies; not for large or industrial-scale data</td>
 <td align="left">✅ Disk-only limit; terabyte-scale supported</td>
 <td align="left">✅ Full drive at any capacity</td>
 <td align="left">✅ No built-in limit; disk / cloud quota only</td>
@@ -347,8 +347,8 @@ SafeNova/
     │   └── argon2.umd.min.js  # Argon2id WASM/JS implementation (hashwasm)
     ├── docmode.js         # Pre-CSS docmode guard (runs before stylesheet loads)
     ├── initlog.js         # Initialization stage console logger (InitLog)
-    ├── constants.js       # Shared constants (DB names, limits, chunk size), utilities, icon SVGs, duress hash helpers
-    ├── db.js              # IndexedDB abstraction — SafeNovaEFS (containers / files / vfs / chunks stores)
+    ├── constants.js       # Shared constants (IDB names, limits, chunk size), utilities, icon SVGs, duress hash helpers
+    ├── db.js              # IDB abstraction — SafeNovaEFS (containers / files / vfs / chunks stores)
     ├── crypto.js          # AES-256-GCM + Argon2id encryption layer
     ├── vfs.js             # In-memory virtual filesystem (nodes, positions, child index)
     ├── state.js           # App state singleton — key, session encrypt/decrypt, three-source wrap key
@@ -366,10 +366,10 @@ SafeNova/
 
 1. **Create** a container with a name and password
 2. **Unlock** the container — Argon2id derives the key from your password
-3. Files you upload are encrypted with AES-256-GCM before being saved to IndexedDB
+3. Files you upload are encrypted with AES-256-GCM before being saved to IDB
 4. The virtual filesystem (folder tree + icon positions) is also encrypted and saved separately
 5. **Lock** the container — the derived container key is wiped from memory; if the **Export password guard** setting is disabled, a pre-generated export cache (built when the setting was disabled and kept up to date after every file operation) remains in the database, ready for the next passwordless export
-6. **Delete** the container — first, every encrypted blob is cryptographically pre-shredded (random bytes XOR-flipped for inline files; IV zeroed for large chunked files); then heavy internal blobs (deferred workspace data, export cache, audit log) are nullified to force immediate browser-level storage release; finally all encrypted records, the VFS blob, and the container metadata are permanently deleted from IndexedDB
+6. **Delete** the container — first, every encrypted blob is cryptographically pre-shredded (random bytes XOR-flipped for inline files; IV zeroed for large chunked files); then heavy internal blobs (deferred workspace data, export cache, audit log) are nullified to force immediate browser-level storage release; finally all encrypted records, the VFS blob, and the container metadata are permanently deleted from IDB
 
 All container data is scoped to the current browser and device. Use **Export Container** to back up or transfer to another device.
 
@@ -427,7 +427,7 @@ The `version` attribute in the XML manifest distinguishes between format generat
 | File encryption  | AES-256-GCM (random 96-bit IV per file)                |
 | VFS encryption   | AES-256-GCM (same key, independent IV)                 |
 | Session tokens   | AES-256-GCM, dual-key: per-tab ephemeral or persistent |
-| Browser key wrap | HKDF-SHA-256 from fingerprint + cookie + IndexedDB     |
+| Browser key wrap | HKDF-SHA-256 from fingerprint + cookie + IDB           |
 | Integrity check  | AES-256-GCM verification blob authenticated on open    |
 | Duress hash      | SHA-256(random 32-byte salt ‖ password), IDB-only      |
 
@@ -469,7 +469,7 @@ Before `snv-bsk` is written to `localStorage`, it is itself encrypted with a sep
 | --- | ------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | 1   | Browser fingerprint | _(computed)_                                  | `origin \0 userAgent \0 platform \0 language \0 hardwareConcurrency \0 colorDepth \0 pixelDepth` |
 | 2   | `snv-kc` cookie     | Cookie jar (`SameSite=Strict`, ~400 days TTL) | 32 random bytes, isolated from localStorage                                                      |
-| 3   | `snv-ki` record     | Separate IndexedDB `SafeNovaKS`               | 32 random bytes, independent from main `SafeNovaEFS` database                                    |
+| 3   | `snv-ki` record     | Separate IDB `SafeNovaKS`                     | 32 random bytes, independent from main `SafeNovaEFS` database                                    |
 
 ```
 ikm      = fingerprint \0 cookie_bytes(32) \0 idb_bytes(32)
@@ -500,7 +500,7 @@ Both scope types use the same blob layout: `IV(12) || AES-256-GCM(scope_key, exp
 
 #### Remaining trade-off
 
-An attacker with live access to the running browser process (e.g. malicious extension, XSS) can still call the same fingerprint function, read the cookie, and query the `SafeNovaKS` IndexedDB to derive the wrap key. The three-source wrapping layer protects against _offline_ credential theft (disk images, direct `localStorage` dumps, partial storage exports), not against in-browser code execution.
+An attacker with live access to the running browser process (e.g. malicious extension, XSS) can still call the same fingerprint function, read the cookie, and query the `SafeNovaKS` IDB to derive the wrap key. The three-source wrapping layer protects against _offline_ credential theft (disk images, direct `localStorage` dumps, partial storage exports), not against in-browser code execution.
 
 ---
 
@@ -590,7 +590,7 @@ Because the real password still works, you can unlock the container afterward to
 
 ### Technical details
 
--   The duress hash is stored in IndexedDB as a salted SHA-256 hash — never exported to `.safenova` files
+-   The duress hash is stored in IDB as a salted SHA-256 hash — never exported to `.safenova` files
 -   Corruption method: random bytes are XOR-flipped with a random non-zero value in each encrypted blob (inline files). For large chunked files, the AES-GCM IV stored in the file record is zeroed instead — no chunk data is read, making corruption of large files maximally fast. Position and XOR delta are unknown, unlogged, and unreproducible. Any byte change in AES-GCM ciphertext, or a zeroed IV, causes authentication failure for the entire file
 -   After triggering, the duress hash and export cache are deleted from the container record — no forensic residue
 -   It can be toggled on and off in Settings → Danger Zone
@@ -652,7 +652,7 @@ Each tick performs **five independent checks**:
 | ---------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | `crypto.getRandomValues`                                               | IV / key generation                                                |
 | `crypto.subtle.{encrypt,decrypt,importKey,exportKey,deriveKey,digest}` | All cryptographic operations                                       |
-| `IDBFactory.prototype.open`                                            | IndexedDB access                                                   |
+| `IDBFactory.prototype.open`                                            | IDB access                                                         |
 | `Storage.prototype.{getItem,setItem,removeItem}`                       | Session key storage                                                |
 | `btoa` / `atob`                                                        | Base-64 encode/decode                                              |
 | `TextEncoder.prototype.encode` / `TextDecoder.prototype.decode`        | Text serialization / deserialization                               |
@@ -855,7 +855,7 @@ The built-in scanner performs a deep analysis of the virtual disk image, encrypt
 
 | #   | Check                        | Repairs                                                                                                             |
 | --- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| 1   | File data existence          | Removes VFS nodes whose encrypted blob is missing from IndexedDB                                                    |
+| 1   | File data existence          | Removes VFS nodes whose encrypted blob is missing from IDB                                                          |
 | 2   | Encryption IV integrity      | Accepts Array/Uint8Array/ArrayBuffer (canonical: plain Array); coerces base64 strings; purges only if truly invalid |
 | 3   | File blob integrity          | Resets declared size to 0 if blob is empty                                                                          |
 | 4   | Orphaned storage records     | Deletes DB records not referenced by any VFS node                                                                   |
@@ -893,13 +893,13 @@ The degree of parallelism is computed once at startup based on `navigator.hardwa
 
 ### Bulk upload
 
-For each batch of files the application reads all `ArrayBuffer` payloads in parallel, encrypts the batch in parallel, then writes every encrypted record to IndexedDB in a **single transaction**, eliminating the per-file transaction overhead that would otherwise dominate for large numbers of small files. Files with encrypted blobs exceeding **50 MB** are stored as split 50 MB chunks across the `chunks` object store, avoiding the browser's ~2 GB structured-clone limit on IndexedDB reads; the chunking is fully transparent to all read paths.
+For each batch of files the application reads all `ArrayBuffer` payloads in parallel, encrypts the batch in parallel, then writes every encrypted record to IDB in a **single transaction**, eliminating the per-file transaction overhead that would otherwise dominate for large numbers of small files. Files with encrypted blobs exceeding **50 MB** are stored as split 50 MB chunks across the `chunks` object store, avoiding the browser's ~2 GB structured-clone limit on IDB reads; the chunking is fully transparent to all read paths.
 
 <a id="zip-export"></a>
 
 ### ZIP export
 
-Exporting files as an archive uses a single IndexedDB read transaction that fetches all required records concurrently. Decryption of all records is then dispatched in one parallel batch rather than being serialised sequentially.
+Exporting files as an archive uses a single IDB read transaction that fetches all required records concurrently. Decryption of all records is then dispatched in one parallel batch rather than being serialised sequentially.
 
 <a id="password-change"></a>
 
@@ -911,7 +911,7 @@ Re-encrypting a container under a new key dispatches all decrypt–re-encrypt pa
 
 ### Container export
 
-Exporting a `.safenova` file requires no single contiguous memory allocation regardless of container size. The builder receives each file blob as an individual chunk (no concatenation into one giant buffer), computes CRC32 incrementally, and emits an **array of small output parts**. The parts array is passed directly to the `Blob` constructor — the browser stitches the pieces together internally without requiring a duplicate allocation. The peak RAM footprint for an N-gigabyte export is approximately N bytes (the data already held in IndexedDB), rather than ~3× N.
+Exporting a `.safenova` file requires no single contiguous memory allocation regardless of container size. The builder receives each file blob as an individual chunk (no concatenation into one giant buffer), computes CRC32 incrementally, and emits an **array of small output parts**. The parts array is passed directly to the `Blob` constructor — the browser stitches the pieces together internally without requiring a duplicate allocation. The peak RAM footprint for an N-gigabyte export is approximately N bytes (the data already held in IDB), rather than ~3× N.
 
 <a id="drag-drop-performance"></a>
 
