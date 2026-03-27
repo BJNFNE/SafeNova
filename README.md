@@ -47,7 +47,7 @@ Key properties:
     -   [How it works](#duress-how-it-works)
     -   [Why this design](#duress-why-this-design)
     -   [Technical details](#duress-technical-details)
--   [🔬 SafeNova Proactive](#safenova-proactive)
+-   [🔬 SafeNova Proactive Anti-Tamper](#safenova-proactive-antitamper)
     -   [Startup sequence](#proactive-startup-sequence)
         -   [Why native restoration matters](#proactive-native-restoration-advantage)
     -   [Real-time watchdog](#proactive-watchdog)
@@ -342,7 +342,7 @@ SafeNova/
 │
 └── js/
     ├── proactive/
-    │   └── daemon.js          # SafeNova Proactive — anti-tamper runtime integrity guard (loads first of all, in <head>)
+    │   └── daemon.js          # SafeNova Proactive — anti-tamper runtime integrity guard (loads first of all)
     ├── libs/
     │   └── argon2.umd.min.js  # Argon2id WASM/JS implementation (hashwasm)
     ├── detectors/
@@ -531,7 +531,7 @@ An attacker with live access to the running browser process (e.g. malicious exte
 | `form-action` | `'none'`                    |
 | `object-src`  | `'none'`                    |
 
-`'unsafe-inline'` is absent from `script-src`. There are no inline `<script>` blocks — all JavaScript is loaded as external files via `'self'`. Argon2id WASM compilation is permitted by `'wasm-unsafe-eval'`. `about:` is added to `frame-src` to allow SafeNova Proactive to create a temporary hidden iframe at startup for capturing pristine, extension-untampered native references (the iframe is removed from the DOM immediately after capture).
+`'unsafe-inline'` is absent from `script-src`. There are no inline `<script>` blocks — all JavaScript is loaded as external files via `'self'`. Argon2id WASM compilation is permitted by `'wasm-unsafe-eval'`. `about:` is added to `frame-src` to allow **SafeNova Proactive** to create a temporary hidden iframe at startup for capturing pristine, extension-untampered native references (the iframe is removed from the DOM immediately after capture).
 
 <a id="csp-server-headers"></a>
 
@@ -600,11 +600,11 @@ Because the real password still works, you can unlock the container afterward to
 
 ---
 
-<a id="safenova-proactive"></a>
+<a id="safenova-proactive-antitamper"></a>
 
-## 🛡️ SafeNova Proactive
+## 🛡️ SafeNova Proactive Anti-Tamper
 
-SafeNova Proactive is a self-contained **anti-tamper runtime integrity guard** that loads in `<head>` **before every other application script**. Its threat model is Self-XSS and malicious browser extensions (MV2 `document_start` content scripts, cosmetic-filter injections): both classes of attack require modifying the JavaScript runtime environment in a way that can be detected by capturing native references before any attacker code runs. The application refuses to start if the guard is absent or failed to initialize.
+SafeNova Proactive is a self-contained **anti-tamper runtime integrity guard** that loads **before every other application script**. Its threat model is Self-XSS and malicious browser extensions (MV2 `document_start` content scripts, cosmetic-filter injections): both classes of attack require modifying the JavaScript runtime environment in a way that can be detected by capturing native references before any attacker code runs. The application refuses to start if the guard is absent or failed to initialize.
 
 > ![](./pics/screenshot_proactive.png) **Silent by design.** Proactive runs entirely in the background with zero user-visible presence during normal operation. No indicators, no UI overlays, no interaction required — just quiet, constant verification of the cryptographic runtime underneath the application. Think of it as an immune system rather than antivirus: always active, completely invisible, and only surfaces when something genuinely suspicious is detected.
 
