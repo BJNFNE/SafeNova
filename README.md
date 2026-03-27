@@ -345,17 +345,19 @@ SafeNova/
     │   └── daemon.js          # SafeNova Proactive — anti-tamper runtime integrity guard (loads first of all, in <head>)
     ├── libs/
     │   └── argon2.umd.min.js  # Argon2id WASM/JS implementation (hashwasm)
-    ├── docmode.js         # Pre-CSS docmode guard (runs before stylesheet loads)
-    ├── initlog.js         # Initialization stage console logger (InitLog)
-    ├── constants.js       # Shared constants (IDB names, limits, chunk size), utilities, icon SVGs, duress hash helpers
-    ├── db.js              # IDB abstraction — SafeNovaEFS (containers / files / vfs / chunks stores)
-    ├── crypto.js          # AES-256-GCM + Argon2id encryption layer
-    ├── vfs.js             # In-memory virtual filesystem (nodes, positions, child index)
-    ├── state.js           # App state singleton — key, session encrypt/decrypt, three-source wrap key
-    ├── home.js            # Container management: create, unlock, import, export, change password
-    ├── desktop.js         # Desktop UI: icons, folder windows, drag & drop, integrity scanner
-    ├── fileops.js         # File operations: upload, download, open, copy/paste, rename, delete, ZIP export; export cache management for passwordless export
-    └── main.js            # App boot, event binding, console security warning
+    ├── detectors/
+    │   └── incognito.js       # Incognito / private-mode detector — warns on first visit about limitations and risks
+    ├── docmode.js             # Pre-CSS docmode guard (runs before stylesheet loads)
+    ├── initlog.js             # Initialization stage console logger (InitLog)
+    ├── constants.js           # Shared constants (IDB names, limits, chunk size), utilities, icon SVGs, duress hash helpers
+    ├── db.js                  # IDB abstraction — SafeNovaEFS (containers / files / vfs / chunks stores)
+    ├── crypto.js              # AES-256-GCM + Argon2id encryption layer
+    ├── vfs.js                 # In-memory virtual filesystem (nodes, positions, child index)
+    ├── state.js               # App state singleton — key, session encrypt/decrypt, three-source wrap key
+    ├── home.js                # Container management: create, unlock, import, export, change password
+    ├── desktop.js             # Desktop UI: icons, folder windows, drag & drop, integrity scanner
+    ├── fileops.js             # File operations: upload, download, open, copy/paste, rename, delete, ZIP export; export cache management for passwordless export
+    └── main.js                # App boot, event binding, console security warning
 ```
 
 ---
@@ -994,8 +996,13 @@ I (**[DosX](https://github.com/DosX-dev)**) envision **SafeNova** as what it is:
 <img src="https://readme-contribs.as93.net/contributors/DosX-dev/SafeNova?textColor=737373&perRow=9&shape=squircle&isResponsive=true" />
 </a>
 
+> Special thanks:
+>
+> -   **[Joe12387](https://github.com/Joe12387)** — Private/Incognito detection implementation in TypeScript that was rewritten in JavaScript
+
 > The following tools were used during development:
 >
 > -   **[Visual Studio Code](https://code.visualstudio.com/)** — writing code in it and formatting
+> -   **[Web DevTools](https://en.wikipedia.org/wiki/Web_development_tools)** — debugging and inspecting web applications
 > -   **[Detect It Easy](https://github.com/horsicq/Detect-It-Easy)** — analyzing the ZIP format and structure in practice
 > -   **[Claude Opus Agent (v4.6)](https://www.claude.ai/)** — help with developing the interface part, checking the code and writing local tests
