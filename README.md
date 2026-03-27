@@ -26,6 +26,7 @@ Key properties:
     -   [Option B — Local server](#getting-started-local)
 -   [📋 Requirements](#requirements)
 -   [⚙️ Features](#features)
+-   [⚔️ SafeNova vs. the Competition](#comparison)
 -   [📁 Project structure](#project-structure)
 -   [🔒 How containers work](#how-containers-work)
 -   [📄 The `.safenova` Container Format](#container-format)
@@ -137,6 +138,191 @@ No external installs needed — it uses the Windows built-in `HttpListener`.
 -   **Settings** — three tabs: personalization, statistics, activity logs
 -   **Keyboard shortcuts** — `Delete`, `F2`, `Ctrl+A`, `Ctrl+C/X/V`, `Ctrl+S` (save in editor), `Escape`, `End` (lock container — only when focus is not in a text field)
 -   **Mobile-friendly** — long-press to drag icons, rubber-band selection, single/double-tap gestures, paste at finger position, multi-file drag with per-item snap previews
+
+---
+
+<a id="comparison"></a>
+
+## ⚔️ SafeNova vs. the Competition
+
+We think SafeNova has real strengths worth knowing about — but every tool has its place. Compare for yourself and pick what fits your use case.
+
+Legend: ✅ Advantage / works well &nbsp;·&nbsp; ❌ Disadvantage / not supported &nbsp;·&nbsp; 🟡 Partial / situational
+
+<table>
+<thead>
+<tr>
+<th align="left">Feature</th>
+<th align="left"><a href="https://safenova.dosx.su/">SafeNova</a></th>
+<th align="left"><a href="https://www.veracrypt.fr/">VeraCrypt</a></th>
+<th align="left"><a href="https://learn.microsoft.com/windows/security/operating-system-security/data-protection/bitlocker/">BitLocker</a></th>
+<th align="left"><a href="https://cryptomator.org/">Cryptomator</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="left"><b>Best suited for</b></td>
+<td align="left">Personal files on shared or managed machines — zero-install, browser-only, no disk traces</td>
+<td align="left">Large encrypted volumes on own hardware; plausible deniability</td>
+<td align="left">IT-managed Windows with full-disk encryption and central key recovery</td>
+<td align="left">Encrypting files before syncing to cloud (Dropbox, Google Drive, OneDrive…)</td>
+</tr>
+<tr>
+<td align="left"><b>Cross-platform</b></td>
+<td align="left">✅ Any browser — Windows, macOS, Linux, Android, iOS</td>
+<td align="left">🟡 Desktop only — Windows, macOS, Linux</td>
+<td align="left">❌ Windows only</td>
+<td align="left">✅ Windows, macOS, Linux, Android, iOS</td>
+</tr>
+<tr>
+<td align="left"><b>No installation</b></td>
+<td align="left">✅ Zero install, runs in the browser</td>
+<td align="left">❌ Requires system installation</td>
+<td align="left">❌ Windows Pro/Enterprise only</td>
+<td align="left">❌ Requires a desktop or mobile app</td>
+</tr>
+<tr>
+<td align="left"><b>Admin / root rights</b></td>
+<td align="left">✅ None required</td>
+<td align="left">❌ Required for mounting</td>
+<td align="left">❌ Required</td>
+<td align="left">🟡 None on Windows/iOS; macOS needs macFUSE; Linux needs FUSE</td>
+</tr>
+<tr>
+<td align="left"><b>Encryption algorithm</b></td>
+<td align="left">✅ AES-256-GCM — authenticated encryption; every ciphertext has an integrity tag</td>
+<td align="left">✅ AES / Twofish / Serpent (configurable)</td>
+<td align="left">🟡 AES-128/256 XTS — no authentication tag</td>
+<td align="left">✅ AES-256-GCM per file</td>
+</tr>
+<tr>
+<td align="left"><b>Key derivation</b></td>
+<td align="left">✅ Argon2id — memory-hard; GPU brute-force is expensive</td>
+<td align="left">🟡 PBKDF2-SHA-512 / Whirlpool — not memory-hard; GPU-crackable</td>
+<td align="left">🟡 TPM-bound; password KDF is comparatively weak</td>
+<td align="left">✅ scrypt — memory-hard; comparable to Argon2id</td>
+</tr>
+<tr>
+<td align="left"><b>Per-item authentication</b></td>
+<td align="left">✅ GCM tag per chunk — tampering always detected</td>
+<td align="left">❌ Block-level only; no per-file MAC</td>
+<td align="left">❌ XTS provides no authentication</td>
+<td align="left">✅ GCM tag per file</td>
+</tr>
+<tr>
+<td align="left"><b>Portable container</b></td>
+<td align="left">✅ Single <code>.safenova</code> file — copy anywhere, open anywhere</td>
+<td align="left">🟡 Single container file, but fixed pre-allocated size</td>
+<td align="left">❌ Tied to the Windows NTFS partition</td>
+<td align="left">🟡 Folder of encrypted files — portable, but not a single archive</td>
+</tr>
+<tr>
+<td align="left"><b>File stealer protection</b></td>
+<td align="left">✅ Encrypted in IndexedDB; never plaintext on disk</td>
+<td align="left">❌ Mounted volume exposes all files to every process</td>
+<td align="left">❌ Once unlocked, all files accessible to all processes</td>
+<td align="left">🟡 Encrypted on disk; plaintext only in the virtual drive while open</td>
+</tr>
+<tr>
+<td align="left"><b>Session / key management</b></td>
+<td align="left">✅ Three-source HKDF wrap key; tab + browser sessions; cross-tab invalidation</td>
+<td align="left">❌ Key in RAM while mounted; no session concept</td>
+<td align="left">❌ TPM-derived at boot; no session control</td>
+<td align="left">❌ Key in memory while open; no session tokens or expiry</td>
+</tr>
+<tr>
+<td align="left"><b>Duress / emergency wipe</b></td>
+<td align="left">✅ Duress password silently destroys the container</td>
+<td align="left">❌ Not supported</td>
+<td align="left">❌ Not supported</td>
+<td align="left">❌ Not supported</td>
+</tr>
+<tr>
+<td align="left"><b>Runtime anti-tamper</b></td>
+<td align="left">✅ SafeNova Proactive — native API restoration, 20+ hooks, quadruple watchdog</td>
+<td align="left">🟡 N/A — native binary; no browser JS attack surface</td>
+<td align="left">🟡 N/A — same</td>
+<td align="left">🟡 N/A — same</td>
+</tr>
+<tr>
+<td align="left"><b>Content Security Policy</b></td>
+<td align="left">✅ Strict CSP (meta tag + server headers); blocks inline scripts and external loads</td>
+<td align="left">🟡 N/A — browser mechanism; not applicable to native apps</td>
+<td align="left">🟡 N/A — same</td>
+<td align="left">🟡 N/A — same</td>
+</tr>
+<tr>
+<td align="left"><b>Integrity scanner</b></td>
+<td align="left">✅ 28 automated checks (VFS + DB); auto-repair; decryption verification</td>
+<td align="left">❌ No built-in scanning</td>
+<td align="left">❌ No per-file integrity</td>
+<td align="left">🟡 Detects corrupt files; no automated repair</td>
+</tr>
+<tr>
+<td align="left"><b>Export / backup</b></td>
+<td align="left">✅ One-click export as <code>.safenova</code> or ZIP</td>
+<td align="left">🟡 Container file is portable but fixed size; no incremental backup</td>
+<td align="left">❌ Cannot export; tied to the Windows volume</td>
+<td align="left">✅ Files sync individually — cloud acts as continuous backup</td>
+</tr>
+<tr>
+<td align="left"><b>Data deletion</b></td>
+<td align="left">✅ Blob shredding + full IndexedDB purge on delete</td>
+<td align="left">🟡 Delete the file; OS journaling may retain fragments</td>
+<td align="left">❌ Decryption leaves files; separate secure-erase needed</td>
+<td align="left">🟡 Delete the vault; journaling applies; cloud may retain versions</td>
+</tr>
+<tr>
+<td align="left"><b>Code auditability</b></td>
+<td align="left">✅ Open source; plain JS; no build pipeline</td>
+<td align="left">✅ Open source; multiple independent audits</td>
+<td align="left">❌ Closed source; no audit possible</td>
+<td align="left">✅ Open source; independent audits conducted</td>
+</tr>
+<tr>
+<td align="left"><b>Performance at scale</b></td>
+<td align="left">🟡 Good for typical files; slower than native for bulk operations</td>
+<td align="left">✅ Native + AES-NI; minimal overhead</td>
+<td align="left">✅ Kernel driver + AES-NI; transparent to the OS</td>
+<td align="left">✅ Native; per-file overhead is minimal; handles large libraries</td>
+</tr>
+<tr>
+<td align="left"><b>Targeted attack protection</b></td>
+<td align="left">🟡 Blocks JS injection; limited against full-OS compromise</td>
+<td align="left">🟡 Anti-forensic; cannot stop OS-level keyloggers</td>
+<td align="left">❌ TPM bus sniffing (Evil Maid) is a known vector</td>
+<td align="left">🟡 No special runtime protection; same OS-level limits</td>
+</tr>
+<tr>
+<td align="left"><b>Storage size</b></td>
+<td align="left">❌ Max 8 GB per container; IndexedDB quota applies; not for large or industrial-scale data</td>
+<td align="left">✅ Disk-only limit; terabyte-scale supported</td>
+<td align="left">✅ Full drive at any capacity</td>
+<td align="left">✅ No built-in limit; disk / cloud quota only</td>
+</tr>
+<tr>
+<td align="left"><b>Hidden volumes</b></td>
+<td align="left">❌ Not supported</td>
+<td align="left">✅ Hidden volumes + hidden OS partition</td>
+<td align="left">❌ Not supported</td>
+<td align="left">❌ Not supported</td>
+</tr>
+<tr>
+<td align="left"><b>OS / filesystem integration</b></td>
+<td align="left">❌ Browser sandbox only; no virtual drive mount</td>
+<td align="left">✅ Mounts as a real drive letter; full shell integration</td>
+<td align="left">✅ Transparent OS encryption; Group Policy; BitLocker To Go</td>
+<td align="left">✅ Mounts as a virtual drive (WebDAV / FUSE)</td>
+</tr>
+<tr>
+<td align="left"><b>Multi-user access</b></td>
+<td align="left">❌ Single user per container</td>
+<td align="left">❌ Single user at a time</td>
+<td align="left">🟡 Multiple recovery keys; enterprise AD deployment</td>
+<td align="left">❌ Single shared password; per-user control requires Cryptomator Hub (separate server)</td>
+</tr>
+</tbody>
+</table>
 
 ---
 
