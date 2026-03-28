@@ -101,14 +101,20 @@
    snapshot rather than live globals, loop counters use indexed `for`
    instead of iterator-based `for…of`, property lookups use the `in`
    operator instead of hookable Set/Map methods, and string operations
-   use captured `slice` / `indexOf` / `toLowerCase` rather than live
-   prototype calls.
+   use pure operator-level reimplementations (`_pureToLower`,
+   `_pureIndexOf`, `_pureSlice`) built entirely from bracket indexing,
+   `.length`, `+` concatenation, and comparison operators — zero
+   prototype method calls, immune to ANY prototype poisoning.
+   The original captured references (`_strSlice`, `_strToLower`,
+   `_strIndexOf`) are retained solely for boot-time and per-tick
+   native validation — they are never used for actual string operations.
    As a direct result, the integrity-checking core is well-isolated
    and resistant to most hook-based attacks: replacing window.fetch,
-   Array.prototype.push, or other live globals after page load cannot
-   change daemon behaviour — the daemon has already captured what it
-   needs, validates those captures on every tick, and would detect the
-   replacement before an attacker could leverage it.
+   Array.prototype.push, String.prototype.toLowerCase, or other live
+   globals after page load cannot change daemon behaviour — the daemon
+   uses only pure operators for string processing, validates captured
+   references on every tick, and would detect the replacement before
+   an attacker could leverage it.
    ============================================================ */
 
 (() => {
@@ -143,6 +149,68 @@
     const _strSlice = String.prototype.slice;
     const _strToLower = String.prototype.toLowerCase;
     const _strIndexOf = String.prototype.indexOf;
+
+    // ── Pure operator-level string utilities ──────────────────────
+    // Built entirely from language-level operators: bracket indexing (s[i]),
+    // .length (string internal slot — non-overridable), concatenation (+),
+    // comparison (===, >=, <=), and arithmetic.  ZERO prototype method calls.
+    //
+    // Why not just _reflectApply(_strSlice, …)?
+    //   That chain has two dependencies: captured Reflect.apply + captured
+    //   String.prototype.slice.  Both are validated native at boot and on
+    //   every tick, so the practical risk is near-zero.  But the pure
+    //   implementations remove even this theoretical dependency: they have
+    //   NO external call targets — the JS engine resolves bracket indexing
+    //   and `+` at the bytecode level, entirely outside the prototype
+    //   lookup mechanism.  An attacker who controls every prototype in the
+    //   runtime still cannot affect these functions.
+    //
+    // _LOWER_MAP — frozen A-Z → a-z lookup.  Own-property access via []
+    // uses the engine's internal hash table, NOT Object.prototype.
+    const _LOWER_MAP = _freeze({
+        A: 'a', B: 'b', C: 'c', D: 'd', E: 'e', F: 'f', G: 'g', H: 'h', I: 'i',
+        J: 'j', K: 'k', L: 'l', M: 'm', N: 'n', O: 'o', P: 'p', Q: 'q', R: 'r',
+        S: 's', T: 't', U: 'u', V: 'v', W: 'w', X: 'x', Y: 'y', Z: 'z'
+    });
+
+    // _pureToLower(s) — ASCII toLowerCase.
+    // Only A-Z (U+0041-U+005A) are mapped; all other code points pass through.
+    // Sufficient for daemon.js: HTML tag names, attribute names, URL protocols
+    // and hosts are always pure ASCII per the relevant W3C / WHATWG specs.
+    const _pureToLower = s => {
+        let r = '';
+        for (let i = 0, len = s.length; i < len; i++) {
+            const c = s[i];
+            r += (c >= 'A' && c <= 'Z') ? _LOWER_MAP[c] : c;
+        }
+        return r;
+    };
+
+    // _pureIndexOf(s, needle [, from]) — substring search via nested indexed loop.
+    // Returns first index of needle in s starting at from (default 0), or -1.
+    const _pureIndexOf = (s, needle, from) => {
+        const sLen = s.length, nLen = needle.length;
+        if (nLen === 0) return 0;
+        const start = (from !== void 0 && from > 0) ? from : 0;
+        const limit = sLen - nLen;
+        outer: for (let i = start; i <= limit; i++) {
+            for (let j = 0; j < nLen; j++) {
+                if (s[i + j] !== needle[j]) continue outer;
+            }
+            return i;
+        }
+        return -1;
+    };
+
+    // _pureSlice(s, start [, end]) — substring extraction via bracket + concatenation.
+    const _pureSlice = (s, start, end) => {
+        const len = s.length;
+        let a = start < 0 ? (len + start > 0 ? len + start : 0) : (start > len ? len : start);
+        let b = end === void 0 ? len : (end < 0 ? (len + end > 0 ? len + end : 0) : (end > len ? len : end));
+        let r = '';
+        for (let i = a; i < b; i++) r += s[i];
+        return r;
+    };
 
     // Capture Function.prototype.toString before anyone can spoof it.
     // All subsequent "is this native?" checks use this reference directly.
@@ -889,9 +957,9 @@
                 for (let i = 0; i < len; i++) {
                     const k = _N.storageKey.call(store, i);
                     // BUG-C: k?.startsWith('snv-') uses live String.prototype.startsWith;
-                    // _reflectApply + captured _strSlice is immune to post-boot patching.
+                    // _pureSlice uses only bracket indexing + concatenation — zero prototype calls.
                     // BUG-F: index assignment (keys[_ki++]) replaces keys.push(k).
-                    if (k && _reflectApply(_strSlice, k, [0, 4]) === 'snv-') { keys[_ki++] = k; }
+                    if (k && _pureSlice(k, 0, 4) === 'snv-') { keys[_ki++] = k; }
                 }
                 if (!keys.length) return;
 
@@ -1203,10 +1271,9 @@
         try {
             const s = '' + urlStr;
             // data: URLs are inline resources (canvas thumbnails, etc.) — always safe
-            // BUG-G: Use captured _strSlice (not live String.prototype.startsWith)
-            // so a post-boot startsWith replacement cannot make all 'd'-prefixed
-            // URLs bypass the origin check.
-            if (s.charCodeAt(0) === 100 && _reflectApply(_strSlice, s, [0, 5]) === 'data:') return false;
+            // BUG-G: s[0] is a pure bracket-indexing operator; _pureSlice uses only
+            // bracket indexing + concatenation — no hookable prototype method at all.
+            if (s[0] === 'd' && _pureSlice(s, 0, 5) === 'data:') return false;
             const parsed = new _N.URL(s, window.location.href);
             const proto = parsed.protocol;
             // Browser-extension resources are injected by user-installed extensions
@@ -1271,9 +1338,9 @@
 
     // ── setAttribute — blocks on* handlers and external resource URLs ──
     const _setAttributeImpl = function (name, value) {
-        // BUG-K: Use captured _strToLower (not live .toLowerCase()) so an attacker
-        // replacing the prototype method cannot make uppercase ONCLICK/SRC pass undetected.
-        const lName = _reflectApply(_strToLower, '' + (name ?? ''), []);
+        // BUG-K: _pureToLower uses a frozen A-Z→a-z lookup + bracket indexing —
+        // no prototype method call; immune to any String.prototype.toLowerCase hook.
+        const lName = _pureToLower('' + (name ?? ''));
         if (lName.length > 2 && lName[0] === 'o' && lName[1] === 'n') {
             _triggerAlert('Inline event handler via setAttribute blocked \u2192 ' + lName);
             return;
@@ -1282,7 +1349,7 @@
         // not auto-loading. Blocking them causes false positives for normal app links.
         // ping= on anchors is still caught below (auto-fires on click).
         if (lName === 'href') {
-            const tag = _reflectApply(_strToLower, '' + (this.tagName || ''), []);
+            const tag = _pureToLower('' + (this.tagName || ''));
             if (tag === 'a' || tag === 'area') {
                 return _N.setAttribute.apply(this, arguments);
             }
@@ -1299,34 +1366,32 @@
     function _htmlHasThreat(html) {
         const h = '' + (html ?? '');
         if (_reflectApply(_reTest, _ON_ATTR_RE, [h])) return 'inline event handler';
-        // BUG-J: Use captured _strIndexOf — replacing live indexOf with () => -1
-        // causes this early-exit to always return false, bypassing the entire scanner.
-        if (_reflectApply(_strIndexOf, h, ['://']) === -1) return false;
+        // BUG-J: _pureIndexOf uses a nested indexed loop + bracket comparison —
+        // no prototype method call; immune to any String.prototype.indexOf hook.
+        if (_pureIndexOf(h, '://') === -1) return false;
         const _RATTR_KEYS = ['src=', 'href=', 'data=', 'ping=', 'action=', 'formaction=', 'poster=', 'srcset='];
-        // BUG-K: Use captured _strToLower — replacing live toLowerCase with identity
-        // makes attribute names uppercase; hLow.indexOf(lowercase-attr) would miss them.
-        const hLow = _reflectApply(_strToLower, h, []);
+        // BUG-K: _pureToLower — pure operator-level ASCII lowercasing.
+        const hLow = _pureToLower(h);
         for (let _ri = 0; _ri < _RATTR_KEYS.length; _ri++) {
             const attr = _RATTR_KEYS[_ri];
             let apos = 0;
             while (true) {
-                apos = _reflectApply(_strIndexOf, hLow, [attr, apos]);
+                apos = _pureIndexOf(hLow, attr, apos);
                 if (apos === -1) break;
                 let vs = apos + attr.length;
                 while (vs < h.length && (h[vs] === ' ' || h[vs] === '\t')) vs++;
                 let ve;
                 if (h[vs] === '"' || h[vs] === "'") {
                     const q = h[vs]; vs++;
-                    ve = _reflectApply(_strIndexOf, h, [q, vs]);
+                    ve = _pureIndexOf(h, q, vs);
                     if (ve === -1) ve = h.length;
                 } else {
                     ve = vs;
                     while (ve < h.length && h[ve] !== ' ' && h[ve] !== '>' && h[ve] !== '\t') ve++;
                 }
-                // BUG-L: Use captured _strSlice instead of live String.prototype.substring —
-                // replacing substring with () => '' makes every extracted URL appear empty,
-                // so _isExternal('') returns false and external URLs pass unchecked.
-                const url = _reflectApply(_strSlice, h, [vs, ve]);
+                // BUG-L: _pureSlice extracts substring via bracket + concatenation —
+                // immune to any String.prototype.slice / .substring hook.
+                const url = _pureSlice(h, vs, ve);
                 if (_isExternal(url)) return attr + url;
                 apos = ve;
             }
@@ -1367,9 +1432,8 @@
     // or other elements for their own purposes are unaffected.
     const _createElementImpl = function (tagName) {
         if (_iframeRestoreDone) {
-            // BUG-K: Use captured _strToLower — replacing live toLowerCase with identity
-            // makes 'IFRAME' !== 'iframe', bypassing the D3 post-init iframe block entirely.
-            const _tag = _reflectApply(_strToLower, '' + (tagName ?? ''), []);
+            // BUG-K: _pureToLower — pure operator-level; no prototype dependency.
+            const _tag = _pureToLower('' + (tagName ?? ''));
             if (_tag === 'iframe') {
                 _triggerAlert('iframe creation blocked post-init \u2192 native-reset attack vector');
                 // Return a harmless <div> so the call site does not throw,
@@ -1474,10 +1538,9 @@
     // MutationObserver element threat scanner — checks a single element node.
     function _scanElementForThreats(el) {
         if (!el || el.nodeType !== 1) return;
-        // BUG-K: Use captured _strToLower + lowercase literals instead of live
-        // toUpperCase — replacing toUpperCase with identity would make 'script' tag
-        // comparisons miss injected <SCRIPT> elements passed through MutationObserver.
-        const _elTag = _reflectApply(_strToLower, '' + (el.tagName || ''), []);
+        // BUG-K: _pureToLower — pure operator-level ASCII lowercasing; no prototype
+        // dependency. Replacing String.prototype.toLowerCase cannot affect this.
+        const _elTag = _pureToLower('' + (el.tagName || ''));
         // <script> elements: only intercept external-src injections.
         // Same-origin and relative scripts (app's own modules) are allowed through.
         // Inline scripts have no src and are handled upstream by innerHTML/document.write hooks.
@@ -1499,7 +1562,7 @@
         const _isNavEl = (_elTag === 'a' || _elTag === 'area');
         for (let _ai = 0; _ai < attrs.length; _ai++) {
             const _a = attrs[_ai];
-            const aName = _reflectApply(_strToLower, '' + _a.name, []);
+            const aName = _pureToLower('' + _a.name);
             if (aName.length > 2 && aName[0] === 'o' && aName[1] === 'n') {
                 try { el.removeAttribute(aName); } catch { }
                 _triggerAlert('Inline event handler on DOM element \u2192 ' + aName);
@@ -1816,10 +1879,8 @@
     function _mkCtorImpl(nativeCtor, label, blockData) {
         return function () {
             const urlStr = '' + (arguments[0] ?? '');
-            // BUG-J: Use captured _strIndexOf — replacing live indexOf with () => -1
-            // would make data: and blob: Worker checks always fail, letting hostile
-            // Workers bypass both guards while still passing _isExternal (same-origin).
-            if (blockData && _reflectApply(_strIndexOf, urlStr, ['data:']) === 0) {
+            // BUG-J: _pureIndexOf — nested indexed loop, zero prototype calls.
+            if (blockData && _pureIndexOf(urlStr, 'data:') === 0) {
                 _triggerAlert(label + ' with data: URL blocked');
                 throw new Error('[SafeNova Proactive] ' + label + ' data: URL blocked');
             }
@@ -1828,7 +1889,7 @@
             // in a separate global with a clean, unhooked fetch — any code inside
             // the blob can exfiltrate data without triggering page-level hooks.
             // SafeNova never creates Workers; any blob: Worker is suspicious.
-            if (blockData && _reflectApply(_strIndexOf, urlStr, ['blob:']) === 0) {
+            if (blockData && _pureIndexOf(urlStr, 'blob:') === 0) {
                 _triggerAlert(label + ' with blob: URL blocked');
                 throw new Error('[SafeNova Proactive] ' + label + ' blob: URL blocked');
             }
@@ -2227,9 +2288,8 @@
                     const parsed = new _N.URL(urlStr);
                     const proto = parsed.protocol;
                     if (proto !== 'ws:' && proto !== 'wss:') return false;
-                    // BUG-K: Use captured _strToLower — replacing live toLowerCase with identity
-                    // would make 'WSS://EVIL.COM' host comparisons always fail (pass as safe).
-                    return _reflectApply(_strToLower, parsed.host, []) === _reflectApply(_strToLower, window.location.host, []);
+                    // BUG-K: _pureToLower — pure operator-level; no prototype dependency.
+                    return _pureToLower(parsed.host) === _pureToLower(window.location.host);
                 } catch { return false; }
             }());
             if (!isSameOrigin) {
@@ -2412,8 +2472,8 @@
                         }
                     }
                     if (_mut.type === 'attributes') {
-                        // BUG-K: Use captured _strToLower for attribute name normalization.
-                        const _aName = _reflectApply(_strToLower, '' + (_mut.attributeName || ''), []);
+                        // BUG-K: _pureToLower — pure operator-level; no prototype dependency.
+                        const _aName = _pureToLower('' + (_mut.attributeName || ''));
                         const _tgt = _mut.target;
                         if (_tgt.nodeType !== 1) continue;
                         if (_aName.length > 2 && _aName[0] === 'o' && _aName[1] === 'n') {
@@ -2423,7 +2483,7 @@
                         }
                         // <a> and <area> href changes are navigation-only — not auto-loading resources
                         if (_aName === 'href') {
-                            const _tgtTag = _reflectApply(_strToLower, '' + (_tgt.tagName || ''), []);
+                            const _tgtTag = _pureToLower('' + (_tgt.tagName || ''));
                             if (_tgtTag === 'a' || _tgtTag === 'area') continue;
                         }
                         if (_aName in _RESOURCE_ATTRS) {
