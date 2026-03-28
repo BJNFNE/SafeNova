@@ -133,7 +133,7 @@ No external installs needed — it uses the Windows built-in `HttpListener`.
 -   **Sort & arrange** — sort icons by name, date, size, or type; drag to custom positions
 -   **Secure container deletion** — before permanent erasure, every encrypted blob is cryptographically pre-shredded: inline files have random bytes XOR-flipped (position and delta are unknown and unlogged); large chunked files have their AES-GCM IV zeroed, making decryption unconditionally impossible and the operation maximally fast; heavy internal blobs (deferred workspace data, export cache, audit log) are explicitly nullified before the record is deleted so that the browser immediately releases persistent storage and the freed space is reflected without waiting for lazy garbage collection
 -   **Duress password** — optional panic password that, when entered anywhere (unlock, change password, export), looks exactly like an incorrect password but silently destroys all encrypted data in the background; see [Duress Password](#duress-password) below
--   **SafeNova Proactive** — runtime protection module that loads first in `<head>`, captures all security-critical native function references at startup, validates every capture is truly native (pre-capture tampering guard), hooks outbound network APIs (fetch, XHR, sendBeacon, WebSocket, window.open, EventSource, Worker/SharedWorker) and DOM exfiltration vectors (setAttribute, innerHTML/outerHTML, insertAdjacentHTML, document.write, Location navigation, form submit, resource property setters) to block external requests, silently removes dynamically injected external scripts via MutationObserver, blocks `eval` and `new Function()` constructors, guards string callbacks in setTimeout/setInterval, and runs a quadruple-redundant watchdog with timer-ID protection and a dead man's switch heartbeat — if the watchdog is killed, the app auto-locks all containers
+-   **SafeNova Proactive** — runtime protection module that loads first in `<head>`, captures all security-critical native function references at startup (including `String.prototype.toLowerCase`, `String.prototype.indexOf`, and `String.prototype.slice` for tamper-proof string operations), validates every capture is truly native (pre-capture tampering guard), hooks outbound network APIs (fetch, XHR, sendBeacon, WebSocket, window.open, EventSource, Worker/SharedWorker — including `data:` and same-origin `blob:` workers) and DOM exfiltration vectors (setAttribute, innerHTML/outerHTML, insertAdjacentHTML, document.write, Location navigation, form submit, resource property setters) to block external requests, silently removes dynamically injected external scripts via MutationObserver, blocks `eval` and `new Function()` constructors, guards string callbacks in setTimeout/setInterval, and runs a quadruple-redundant watchdog with timer-ID protection and a dead man's switch heartbeat — if the watchdog is killed, the app auto-locks all containers
 -   **Container integrity scanner** — 28 automated checks (21 VFS structural + 7 database-level) with one-click auto-repair, **Deep Clean** (flattens over-nested folder trees, repairs all metadata), and a backup prompt before any destructive operation; includes file decryption verification that detects corrupted or unreadable blobs (including those silently destroyed by the duress trigger)
 -   **Settings** — three tabs: personalization, statistics, activity logs
 -   **Keyboard shortcuts** — `Delete`, `F2`, `Ctrl+A`, `Ctrl+C/X/V`, `Ctrl+S` (save in editor), `Escape`, `End` (lock container — only when focus is not in a text field)
@@ -613,7 +613,7 @@ SafeNova Proactive is a self-contained **anti-tamper runtime integrity guard** t
 
 ### Startup sequence
 
-1. **Earliest captures** — at the very first line of execution, before any other code runs, a small set of core language primitives (`Object.freeze`, `RegExp.prototype.test`, `Array.prototype.push`, `String.prototype.slice`) is captured into private constants that cannot be reassigned from outside. If any of these were already replaced by a MV2 `document_start` extension, the structural boot check will detect it
+1. **Earliest captures** — at the very first line of execution, before any other code runs, a set of core language primitives is captured into private constants that cannot be reassigned from outside: `Object.freeze`, `RegExp.prototype.test`, `Array.prototype.push`, `String.prototype.slice`, `String.prototype.toLowerCase`, and `String.prototype.indexOf`. If any of these were already replaced by a MV2 `document_start` extension, the structural boot check will detect it
 2. **Native restoration via hidden iframe** — a temporary hidden `about:blank` iframe is created whose browsing context has never been touched by extensions (MV2 extensions only target the main window, not dynamically-created child frames). If the DOM primitives needed to create the iframe are verified as native, **50+ security-critical functions** are restored back to their pristine state on the main window from the iframe's untouched copies:
     - **Core language primitives** — `Object.defineProperty`, `Object.freeze`, `Reflect.apply`, `Reflect.construct`, and other foundational methods — restored first so all subsequent restoration steps use the native version
     - **Window globals** — `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `Worker`, `SharedWorker`, `MutationObserver`, `URL`, `Blob`, typed arrays, encoding/decoding, timers, `eval`, `Function`, compression streams
@@ -669,11 +669,14 @@ Each tick performs **five independent checks**:
 | `Reflect.apply`                                                        | Core of the native-check mechanism — must stay native              |
 | `EventTarget.prototype.addEventListener` / `.dispatchEvent`            | Event subscription and heartbeat                                   |
 | `XMLHttpRequest.prototype.send`                                        | XHR send path hardening                                            |
-| `RegExp.prototype.test`                                                | Native-check regex — replacing with `()=>true` would bypass checks |
-| `Object.freeze`                                                        | Capture registry immutability                                      |
-| `Array.prototype.push`                                                 | Captured for validation                                            |
-| `String.prototype.slice`                                               | Key prefix checking in storage wipe                                |
-| `Array.prototype[Symbol.iterator]`                                     | Poisoning this would silently skip validation loops                |
+| `RegExp.prototype.test`                                                | Native-check regex — replacing with `()=>true` would bypass checks                |
+| `Object.freeze`                                                        | Capture registry immutability                                                      |
+| `Array.prototype.push`                                                 | Captured for validation                                                            |
+| `String.prototype.slice`                                               | Key prefix checking in storage wipe and URL extraction in HTML scanner             |
+| `String.prototype.toLowerCase`                                         | Tag/attribute name normalisation in DOM hooks — replacing with identity passes `ONCLICK`/`SRC` undetected |
+| `String.prototype.indexOf`                                             | HTML scanner early-exit and attribute extraction; Worker `data:`/`blob:` URL blocking |
+| `Element.prototype.getAttribute`                                       | Used by MutationObserver defense layer to read attribute values safely             |
+| `Array.prototype[Symbol.iterator]`                                     | Poisoning this would silently skip validation loops                                |
 
 **Dead man's switch heartbeat** — every tick dispatches a heartbeat event with a **monotonic counter** that increments inside the private closure. The application only accepts events where the counter is strictly greater than the last seen value **and** within a bounded window (guards against injection of extremely large counter values that would permanently desync the heartbeat). An attacker cannot read or predict the counter from outside the closure. If more than 3 seconds pass without a valid heartbeat, the watchdog has been killed and all open containers are **automatically locked** — derived keys are wiped from memory.
 
@@ -719,7 +722,7 @@ Watchdog timer IDs are stored using plain object properties and tested with the 
 
 ### Network request interception
 
-Every outbound request is validated against `window.location.origin` before it is allowed to proceed. The origin check explicitly whitelists `data:` URLs (inline resources such as canvas-generated thumbnails) and browser extension schemes (`chrome-extension:`, `moz-extension:`, `safari-web-extension:`) to prevent false positives from the app's own data URLs and legitimate user-installed extensions:
+Every outbound request is validated against `window.location.origin` before it is allowed to proceed. The origin check uses a **fail-closed** design: URLs that cannot be parsed by the `URL` constructor are treated as external (unsafe by default). `data:` URLs (inline resources such as canvas-generated thumbnails) are whitelisted using a captured `String.prototype.slice` reference (immune to live prototype replacement), and browser extension schemes (`chrome-extension:`, `moz-extension:`, `safari-web-extension:`) are allowed to prevent false positives from legitimate user-installed extensions:
 
 -   **`fetch`** — blocked and rejected with an error
 -   **`XMLHttpRequest.prototype.open`** — blocked and throws synchronously
@@ -727,7 +730,7 @@ Every outbound request is validated against `window.location.origin` before it i
 -   **`WebSocket`** — connections to any **host:port** combination other than the current origin are blocked and trigger a threat alert. The origin check uses a captured URL constructor (immune to runtime replacement). Same-origin WebSocket connections are forwarded transparently
 -   **`window.open`** — external URLs blocked; same-origin popups forwarded normally
 -   **`EventSource`** — external URLs blocked at construction; an `EventSource` to an external host would establish a persistent covert SSE channel for data exfiltration
--   **`Worker` / `SharedWorker`** — `data:` blob workers and external-URL workers are blocked; `blob:` workers with external embedded URLs are also rejected. Rogue workers could bypass all same-page hooks and exfiltrate data independently
+-   **`Worker` / `SharedWorker`** — `data:` URL workers, `blob:` URL workers, and external-URL workers are blocked. SafeNova does not create Workers; a same-origin `blob:` Worker runs in a separate global scope with an unhooked native `fetch`, so even same-origin blob URLs are an exfiltration vector and are rejected unconditionally
 -   **`ServiceWorker` registration** — blocked preventively. A rogue Service Worker could intercept all fetches on the next page load and inject code before the guard runs. Existing registrations are removed during the threat response
 -   **`setTimeout` / `setInterval` string callbacks** — string-form callbacks (e.g. `setTimeout("eval(code)", 0)`) are stripped to a no-op. Function-form callbacks are forwarded normally
 -   **`eval`** — replaced with a non-configurable, non-writable property that throws synchronously; cannot be restored after the guard runs
@@ -790,13 +793,17 @@ All security-critical references are captured once at the very top of execution 
 
 | Instead of...                      | Proactive uses...      | Why                                                  |
 | ---------------------------------- | ---------------------- | ---------------------------------------------------- |
-| `window.fetch`                     | Captured reference     | Immune to post-load `window.fetch = ...` replacement |
-| `Array.prototype.push`             | `arr[arr.length] = x`  | Index assignment cannot be hooked                    |
-| `for...of`                         | Indexed `for` loops    | Immune to `Symbol.iterator` poisoning                |
-| `new Set()` / `Set.prototype.has`  | `key in plainObject`   | `in` is a language operator, unhookable              |
-| `String.prototype.match` / `.exec` | Manual `indexOf` loops | Avoids hookable regex prototype methods              |
-| `String(x)`                        | `'' + x`               | Concatenation operator, not a function call          |
-| `Array.prototype.slice`            | Captured reference     | Survives prototype replacement                       |
+| `window.fetch`                                       | Captured reference                 | Immune to post-load `window.fetch = ...` replacement                                                                               |
+| `Array.prototype.push`                               | `arr[arr.length] = x`              | Index assignment cannot be hooked                                                                                                  |
+| `for...of`                                           | Indexed `for` loops                | Immune to `Symbol.iterator` poisoning                                                                                              |
+| `new Set()` / `Set.prototype.has`                    | `key in plainObject`               | `in` is a language operator, unhookable                                                                                            |
+| `String.prototype.match` / `.exec`                   | Manual `indexOf` loops             | Avoids hookable regex prototype methods                                                                                            |
+| `String.prototype.startsWith`                        | Captured `_strSlice`               | Immune to live `startsWith` replacement                                                                                            |
+| `String.prototype.toLowerCase` / `.toUpperCase`      | Captured `_strToLower`             | DOM exfiltration hooks compare tag/attribute names in lowercase; replacing `toLowerCase` with identity passes `ONCLICK`/`SRC` undetected |
+| `String.prototype.indexOf` / `.substring`            | Captured `_strIndexOf` / `_strSlice` | HTML threat scanner uses `indexOf` for the early-exit and attribute extraction; replacing with `() => -1` disables the entire scanner; also guards Worker `data:`/`blob:` URL checks |
+| `Array.prototype.forEach`                            | Indexed `for` loops                | Unhookable loop construct                                                                                                          |
+| `String(x)`                                          | `'' + x`                           | Concatenation operator, not a function call                                                                                        |
+| `Array.prototype.slice`                              | Captured reference                 | Survives prototype replacement                                                                                                     |
 
 As a direct result, the integrity-checking core is **well-isolated and resistant to most hook-based attacks**: replacing `window.fetch`, `Array.prototype.push`, or any other live global after page load cannot change the guard's behaviour — it has already captured what it needs, validates those captures on every watchdog tick, and would detect the replacement before an attacker could leverage it.
 
