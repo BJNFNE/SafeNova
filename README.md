@@ -605,7 +605,7 @@ Because the real password still works, you can unlock the container afterward to
 
 ## 🛡️ SafeNova Proactive Anti-Tamper
 
-SafeNova Proactive is a self-contained **anti-tamper runtime integrity guard** that loads **before every other application script**. Its threat model is Self-XSS and malicious browser extensions (MV2 `document_start` content scripts, cosmetic-filter injections): both classes of attack require modifying the JavaScript runtime environment in a way that can be detected by capturing native references before any attacker code runs. The application refuses to start if the guard is absent or failed to initialize.
+SafeNova Proactive is a self-contained **anti-tamper runtime integrity guard** that loads **before every other application script**. Its aggressive threat model is Self-XSS and malicious browser extensions (MV2 `document_start` content scripts, cosmetic-filter injections): both classes of attack require modifying the JavaScript runtime environment in a way that can be detected by capturing native references before any attacker code runs. The application refuses to start if the guard is absent or failed to initialize.
 
 > ![](./pics/screenshot_proactive.png) **Silent by design.** Proactive runs entirely in the background with zero user-visible presence during normal operation. No indicators, no UI overlays, no interaction required — just quiet, constant verification of the cryptographic runtime underneath the application. Think of it as an immune system rather than antivirus: always active, completely invisible, and only surfaces when something genuinely suspicious is detected.
 
@@ -651,32 +651,32 @@ Each tick performs **five independent checks**:
 
 **Native function purity** — verifies that the following functions are still fully native using the captured `Function.prototype.toString` reference (immune to meta-spoofing). Any substitution fires an alert:
 
-| Function                                                               | Purpose                                                            |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `crypto.getRandomValues`                                               | IV / key generation                                                |
-| `crypto.subtle.{encrypt,decrypt,importKey,exportKey,deriveKey,digest}` | All cryptographic operations                                       |
-| `IDBFactory.prototype.open`                                            | IDB access                                                         |
-| `Storage.prototype.{getItem,setItem,removeItem}`                       | Session key storage                                                |
-| `btoa` / `atob`                                                        | Base-64 encode/decode                                              |
-| `TextEncoder.prototype.encode` / `TextDecoder.prototype.decode`        | Text serialization / deserialization                               |
-| `Uint8Array`, `.prototype.{set,subarray,slice}`                        | Typed array integrity                                              |
-| `ArrayBuffer`, `.prototype.slice`                                      | Binary buffer integrity                                            |
-| `DataView`                                                             | Binary data views                                                  |
-| `Blob`                                                                 | File blob construction                                             |
-| `URL`, `URL.createObjectURL` / `URL.revokeObjectURL`                   | URL parsing and blob URL lifecycle                                 |
-| `CompressionStream` / `DecompressionStream` _(if available)_           | Compression pipeline integrity                                     |
-| `Function.prototype.call` / `.apply`                                   | Meta-method hardening                                              |
-| `Reflect.apply`                                                        | Core of the native-check mechanism — must stay native              |
-| `EventTarget.prototype.addEventListener` / `.dispatchEvent`            | Event subscription and heartbeat                                   |
-| `XMLHttpRequest.prototype.send`                                        | XHR send path hardening                                            |
-| `RegExp.prototype.test`                                                | Native-check regex — replacing with `()=>true` would bypass checks                |
-| `Object.freeze`                                                        | Capture registry immutability                                                      |
-| `Array.prototype.push`                                                 | Captured for validation                                                            |
-| `String.prototype.slice`                                               | Key prefix checking in storage wipe and URL extraction in HTML scanner             |
+| Function                                                               | Purpose                                                                                                   |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `crypto.getRandomValues`                                               | IV / key generation                                                                                       |
+| `crypto.subtle.{encrypt,decrypt,importKey,exportKey,deriveKey,digest}` | All cryptographic operations                                                                              |
+| `IDBFactory.prototype.open`                                            | IDB access                                                                                                |
+| `Storage.prototype.{getItem,setItem,removeItem}`                       | Session key storage                                                                                       |
+| `btoa` / `atob`                                                        | Base-64 encode/decode                                                                                     |
+| `TextEncoder.prototype.encode` / `TextDecoder.prototype.decode`        | Text serialization / deserialization                                                                      |
+| `Uint8Array`, `.prototype.{set,subarray,slice}`                        | Typed array integrity                                                                                     |
+| `ArrayBuffer`, `.prototype.slice`                                      | Binary buffer integrity                                                                                   |
+| `DataView`                                                             | Binary data views                                                                                         |
+| `Blob`                                                                 | File blob construction                                                                                    |
+| `URL`, `URL.createObjectURL` / `URL.revokeObjectURL`                   | URL parsing and blob URL lifecycle                                                                        |
+| `CompressionStream` / `DecompressionStream` _(if available)_           | Compression pipeline integrity                                                                            |
+| `Function.prototype.call` / `.apply`                                   | Meta-method hardening                                                                                     |
+| `Reflect.apply`                                                        | Core of the native-check mechanism — must stay native                                                     |
+| `EventTarget.prototype.addEventListener` / `.dispatchEvent`            | Event subscription and heartbeat                                                                          |
+| `XMLHttpRequest.prototype.send`                                        | XHR send path hardening                                                                                   |
+| `RegExp.prototype.test`                                                | Native-check regex — replacing with `()=>true` would bypass checks                                        |
+| `Object.freeze`                                                        | Capture registry immutability                                                                             |
+| `Array.prototype.push`                                                 | Captured for validation                                                                                   |
+| `String.prototype.slice`                                               | Key prefix checking in storage wipe and URL extraction in HTML scanner                                    |
 | `String.prototype.toLowerCase`                                         | Tag/attribute name normalisation in DOM hooks — replacing with identity passes `ONCLICK`/`SRC` undetected |
-| `String.prototype.indexOf`                                             | HTML scanner early-exit and attribute extraction; Worker `data:`/`blob:` URL blocking |
-| `Element.prototype.getAttribute`                                       | Used by MutationObserver defense layer to read attribute values safely             |
-| `Array.prototype[Symbol.iterator]`                                     | Poisoning this would silently skip validation loops                                |
+| `String.prototype.indexOf`                                             | HTML scanner early-exit and attribute extraction; Worker `data:`/`blob:` URL blocking                     |
+| `Element.prototype.getAttribute`                                       | Used by MutationObserver defense layer to read attribute values safely                                    |
+| `Array.prototype[Symbol.iterator]`                                     | Poisoning this would silently skip validation loops                                                       |
 
 **Dead man's switch heartbeat** — every tick dispatches a heartbeat event with a **monotonic counter** that increments inside the private closure. The application only accepts events where the counter is strictly greater than the last seen value **and** within a bounded window (guards against injection of extremely large counter values that would permanently desync the heartbeat). An attacker cannot read or predict the counter from outside the closure. If more than 3 seconds pass without a valid heartbeat, the watchdog has been killed and all open containers are **automatically locked** — derived keys are wiped from memory.
 
@@ -691,7 +691,7 @@ The watchdog cannot be killed by a single call to `clearInterval` or by replacin
 
 | Mechanism                     | Interval | Kill vector                                                                                                                                       |
 | ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `setInterval`                 | 1 000 ms | `clearInterval` with the correct ID                                                                                                               |
+| `setInterval`                 | 50 ms    | `clearInterval` with the correct ID                                                                                                               |
 | Recursive `setTimeout`        | 937 ms   | `clearTimeout` with the correct ID                                                                                                                |
 | `requestAnimationFrame` chain | ~980 ms  | `cancelAnimationFrame` — **guarded: the rAF chain ID is tracked and any call to `cancelAnimationFrame` with that exact ID is silently swallowed** |
 | `MessageChannel` self-ping    | 800 ms   | Replacing `setInterval`/`setTimeout`/`cancelAnimationFrame` has zero effect — `MessageChannel` is a separate browser message-queue mechanism      |
@@ -702,7 +702,7 @@ All timer functions are captured at startup so even if `window.setInterval` is l
 
 Watchdog timer IDs are stored using plain object properties and tested with the `in` operator — not `Set`. This is intentional: `Set.prototype.has` could be replaced via Self-XSS to let an attacker's timer IDs pass through the guard undetected. The `in` operator is a language-level construct — it cannot be overridden from userland JS.
 
-**Visibility-change fast check** — when the tab transitions from background to visible, an immediate full tick runs so an attacker cannot exploit the ~1 s inter-tick window while the tab was hidden.
+**Visibility-change fast check** — when the tab transitions from background to visible, an immediate full tick runs so an attacker cannot exploit the ~50 ms inter-tick window while the tab was hidden.
 
 <a id="proactive-excluded-checks"></a>
 
@@ -791,19 +791,19 @@ SafeNova Proactive is built around one central principle: **protect as many JS p
 
 All security-critical references are captured once at the very top of execution into a frozen snapshot — a frozen image of the JS runtime taken before any extension or injected script can interfere. From that point on, the guard never calls live globals. Every internal operation that needs a JS built-in goes through the captured snapshot:
 
-| Instead of...                      | Proactive uses...      | Why                                                  |
-| ---------------------------------- | ---------------------- | ---------------------------------------------------- |
-| `window.fetch`                                       | Captured reference                 | Immune to post-load `window.fetch = ...` replacement                                                                               |
-| `Array.prototype.push`                               | `arr[arr.length] = x`              | Index assignment cannot be hooked                                                                                                  |
-| `for...of`                                           | Indexed `for` loops                | Immune to `Symbol.iterator` poisoning                                                                                              |
-| `new Set()` / `Set.prototype.has`                    | `key in plainObject`               | `in` is a language operator, unhookable                                                                                            |
-| `String.prototype.match` / `.exec`                   | Manual `indexOf` loops             | Avoids hookable regex prototype methods                                                                                            |
-| `String.prototype.startsWith`                        | Captured `_strSlice`               | Immune to live `startsWith` replacement                                                                                            |
-| `String.prototype.toLowerCase` / `.toUpperCase`      | Captured `_strToLower`             | DOM exfiltration hooks compare tag/attribute names in lowercase; replacing `toLowerCase` with identity passes `ONCLICK`/`SRC` undetected |
-| `String.prototype.indexOf` / `.substring`            | Captured `_strIndexOf` / `_strSlice` | HTML threat scanner uses `indexOf` for the early-exit and attribute extraction; replacing with `() => -1` disables the entire scanner; also guards Worker `data:`/`blob:` URL checks |
-| `Array.prototype.forEach`                            | Indexed `for` loops                | Unhookable loop construct                                                                                                          |
-| `String(x)`                                          | `'' + x`                           | Concatenation operator, not a function call                                                                                        |
-| `Array.prototype.slice`                              | Captured reference                 | Survives prototype replacement                                                                                                     |
+| Instead of...                                   | Proactive uses...                    | Why                                                                                                                                                                                  |
+| ----------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `window.fetch`                                  | Captured reference                   | Immune to post-load `window.fetch = ...` replacement                                                                                                                                 |
+| `Array.prototype.push`                          | `arr[arr.length] = x`                | Index assignment cannot be hooked                                                                                                                                                    |
+| `for...of`                                      | Indexed `for` loops                  | Immune to `Symbol.iterator` poisoning                                                                                                                                                |
+| `new Set()` / `Set.prototype.has`               | `key in plainObject`                 | `in` is a language operator, unhookable                                                                                                                                              |
+| `String.prototype.match` / `.exec`              | Manual `indexOf` loops               | Avoids hookable regex prototype methods                                                                                                                                              |
+| `String.prototype.startsWith`                   | Captured `_strSlice`                 | Immune to live `startsWith` replacement                                                                                                                                              |
+| `String.prototype.toLowerCase` / `.toUpperCase` | Captured `_strToLower`               | DOM exfiltration hooks compare tag/attribute names in lowercase; replacing `toLowerCase` with identity passes `ONCLICK`/`SRC` undetected                                             |
+| `String.prototype.indexOf` / `.substring`       | Captured `_strIndexOf` / `_strSlice` | HTML threat scanner uses `indexOf` for the early-exit and attribute extraction; replacing with `() => -1` disables the entire scanner; also guards Worker `data:`/`blob:` URL checks |
+| `Array.prototype.forEach`                       | Indexed `for` loops                  | Unhookable loop construct                                                                                                                                                            |
+| `String(x)`                                     | `'' + x`                             | Concatenation operator, not a function call                                                                                                                                          |
+| `Array.prototype.slice`                         | Captured reference                   | Survives prototype replacement                                                                                                                                                       |
 
 As a direct result, the integrity-checking core is **well-isolated and resistant to most hook-based attacks**: replacing `window.fetch`, `Array.prototype.push`, or any other live global after page load cannot change the guard's behaviour — it has already captured what it needs, validates those captures on every watchdog tick, and would detect the replacement before an attacker could leverage it.
 

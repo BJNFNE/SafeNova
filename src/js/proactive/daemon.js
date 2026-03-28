@@ -1951,7 +1951,7 @@
     }
 
     /* ──────────────────────────────────────────────────────────
-       6.  Watchdog  (runs every 1 000 ms)
+       6.  Watchdog  (setInterval: 50 ms; other mechanisms: 800–980 ms)
        ────────────────────────────────────────────────────────── */
     let _heartbeatN = 0; // monotonic counter for dead man's switch (E5)
     function _tick() {
@@ -2118,8 +2118,8 @@
     const _wdQueue = [];       // insertion-order queue for trim; closed over, no external ref
     let _wdQHead = 0;          // soft-delete head — advances past already-removed entries
 
-    // ── Mechanism 1: setInterval (1 000 ms) ────────────────────
-    const _ivId = _N._setInterval.call(window, _tick, 1000);
+    // ── Mechanism 1: setInterval (50 ms) ───────────────────────
+    const _ivId = _N._setInterval.call(window, _tick, 50);
     _watchdogIds[_ivId] = 1; _watchdogCount++;
     _wdQueue[_wdQueue.length] = _ivId;
 
