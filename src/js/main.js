@@ -435,15 +435,18 @@ window.addEventListener('storage', e => {
 });
 
 // Release the session claim on tab close / navigation.
-// Both beforeunload (desktop) and pagehide (mobile / bfcache) are needed.
-// If an operation is in progress (upload, encrypt, import, etc.), warn
-// the user before closing — prevents data corruption from interrupted writes.
+// beforeunload (desktop) shows a dialog when an operation is in progress.
+// pagehide (mobile / bfcache) fires on navigation but is NOT cancelable —
+// calling e.preventDefault() or setting e.returnValue here is a spec no-op,
+// so it only handles session cleanup.
 function _onTabUnload(e) {
     if (_appBusy > 0) { e.preventDefault(); e.returnValue = ''; }
     if (App.container?.id) _stopContainerSession(App.container.id);
 }
 window.addEventListener('beforeunload', _onTabUnload);
-window.addEventListener('pagehide', _onTabUnload);
+window.addEventListener('pagehide', () => {
+    if (App.container?.id) _stopContainerSession(App.container.id);
+});
 
 /* ============================================================
    SETTINGS HINT TOOLTIPS
