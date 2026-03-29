@@ -2175,7 +2175,18 @@
     // and app state directly, bypassing the event system entirely.
     try {
         Object.defineProperty(window, '__snvEmergencyLock', {
-            value: function snvEmergencyLock() { _nukeStorage(); _wipeAppState(); },
+            value: function snvEmergencyLock(reason) {
+                _nukeStorage();
+                _wipeAppState();
+                // BUG-FIX: Previously, callers (e.g. the dead man's switch in main.js)
+                // that used __snvEmergencyLock directly would create the veil via
+                // _wipeAppState but NEVER show the alert overlay — the user saw the
+                // animated stripes pattern with no explanation and no reload button.
+                // When a reason string is provided, show the full alert overlay.
+                // The snv:lock handler in main.js calls this WITHOUT a reason (to avoid
+                // a duplicate overlay, since _triggerAlert already calls _showAlert).
+                if (typeof reason === 'string' && reason) _showAlert(reason);
+            },
             writable: false,
             configurable: false,
             enumerable: false,
