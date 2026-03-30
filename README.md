@@ -684,7 +684,7 @@ Each tick performs **five independent checks**:
 
 **Dead man's switch heartbeat** — every tick dispatches a heartbeat event with a **monotonic counter** that increments inside the private closure. The application only accepts events where the counter is strictly greater than the last seen value **and** within a bounded window (guards against injection of extremely large counter values that would permanently desync the heartbeat). An attacker cannot read or predict the counter from outside the closure. If more than 3 seconds pass without a valid heartbeat, the watchdog has been killed and all open containers are **automatically locked** — derived keys are wiped from memory.
 
-**App function integrity** — at window `load`, references to all critical application functions (encrypt, decrypt, key derivation, container lock, etc.) are captured into a frozen snapshot. Every tick compares live values by identity. A Self-XSS attack that replaces any of these via the DevTools console is detected on the very next tick and triggers a full threat response.
+**App function integrity** — at window `load`, all critical application functions are wrapped through `_mkProxy` — the same opaque-forwarder pattern used by network and DOM hooks. The original implementations become closure-private; `toString()` on the live property reveals only the thin forwarder body. Proxied references are frozen into a snapshot and compared by identity on every watchdog tick. A Self-XSS attack that replaces any of these is detected on the very next tick and triggers a full threat response. Raw (unwrapped) references to VFS.init and WinManager.closeAll are kept separately for direct invocation inside `_wipeAppState`. Covered functions: `Crypto.encrypt/decrypt/encryptBin/decryptBin/deriveKey/deriveKeyAndRaw` (exfiltration-path), `Crypto.importRawKey` (called externally — replacement would capture raw AES key bytes), `Crypto.checkVerification` (called on every unlock — replacement with `() => true` bypasses authentication), `Crypto.makeVerification`, `App.lockContainer`, `VFS.init`, `WinManager.closeAll`.
 
 **Scope shadowing guard** — the app's encryption module and the browser's built-in `window.Crypto` (WebCrypto API) share the same identifier. The watchdog confirms it is checking the correct object (app module vs. WebCrypto) by probing for app-specific methods, eliminating false positives.
 <a id="proactive-watchdog-resilience"></a>
@@ -823,7 +823,7 @@ As a direct result, the integrity-checking core is **well-isolated and resistant
 
 #### Hook opacity
 
-Every public hook function placed on `window` or prototypes is wrapped in an opaque forwarder. When an attacker inspects hooked functions via `toString()` in the DevTools console, they see only the forwarder shell — the actual security logic is hidden inside the closure and unreachable from outside. **All 26 hooks** share this identical opaque signature:
+Every public hook function placed on `window` or prototypes — as well as all guarded application functions — is wrapped in an opaque forwarder. When an attacker inspects hooked functions via `toString()` in the DevTools console, they see only the forwarder shell — the actual security logic is hidden inside the closure and unreachable from outside. **All hooks and app functions** share this identical opaque signature:
 
 | Category                | Hooks                                                                                                                                                                                          |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -834,6 +834,7 @@ Every public hook function placed on `window` or prototypes is wrapped in an opa
 | **Timer guards**        | `setTimeout` (string callback), `setInterval` (string callback)                                                                                                                                |
 | **Watchdog protection** | `clearInterval`, `clearTimeout`, `cancelAnimationFrame`                                                                                                                                        |
 | **Workers**             | `Worker`, `SharedWorker`, `ServiceWorkerContainer.register`                                                                                                                                    |
+| **App functions**       | `Crypto.encrypt/decrypt/encryptBin/decryptBin/deriveKey/deriveKeyAndRaw/importRawKey/checkVerification/makeVerification`, `App.lockContainer`, `VFS.init`, `WinManager.closeAll`               |
 
 ---
 
